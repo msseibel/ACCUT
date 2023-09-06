@@ -6,6 +6,15 @@ import models
 import data
 
 
+def to_list_or_str(x):
+    content_paths = x.replace('[','').replace(']','').replace("'",'').split(',')
+    content_paths = [el.strip() for el in content_paths] # remove irritating spaces
+    
+    if len(content_paths) == 1:
+        content_paths = content_paths[0]
+    return content_paths
+
+
 class BaseOptions():
     """This class defines options used during both training and test time.
 
@@ -23,6 +32,8 @@ class BaseOptions():
     def initialize(self, parser):
         """Define the common options that are used in both training and test."""
         # basic parameters
+        parser.add_argument('--content_path', type=to_list_or_str, required=True, help='path of content dataset') #  type=str,
+        parser.add_argument('--style_path', type=to_list_or_str, required=True, help='path of style dataset')
         parser.add_argument('--dataroot', default='placeholder', help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
         parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
         parser.add_argument('--easy_label', type=str, default='experiment_name', help='Interpretable name')
