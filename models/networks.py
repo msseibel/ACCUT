@@ -283,6 +283,13 @@ def define_F(input_nc, netF, norm='batch', use_dropout=False, init_type='normal'
         raise NotImplementedError('projection model name [%s] is not recognized' % netF)
     return init_net(net, init_type, init_gain, gpu_ids)
 
+def define_M(netM, gpu_ids=[], opt=None):
+    if netM == 'semantic':
+        net = MaskPatchSampleF(gpu_ids=gpu_ids)
+    else:
+        raise NotImplementedError('projection model name [%s] is not recognized' % netM)
+    return init_net(net, gpu_ids)
+
 
 def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], opt=None):
     """Create a discriminator
@@ -527,7 +534,49 @@ class StridedConvF(nn.Module):
             x = F.instance_norm(x)
         return self.l2_norm(x)
 
+# multi label per position -> since the patch covers a wide field of view 
+# the patch covers multiple classes in the semantic segmentation map
+# -> get label distribution based on ratio of pixels from each class within the patch
 
+
+class MaskPatchSampleF(nn.Module):
+    def __init__(self, gpu_ids=[]):
+        # potential issues: currently, we use the same patch_ids for multiple images in the batch
+        super(MaskPatchSampleF, self).__init__()
+        self.gpu_ids = gpu_ids
+
+    def forward(self, masks, num_patches=64, patch_ids=None):
+        return_ids = []
+        labels_at_ids = []
+        for feat_id, mask in enumerate(masks):
+            #unique_classes = torch.unique(mask, dim=(1, 2, 3))
+            B, H, W = mask.shape[0], mask.shape[2], mask.shape[3]
+            feat_reshape = mask.permute(0, 2, 3, 1).flatten(1, 2) # B, H*W, C
+            if num_patches > 0:
+                if patch_ids is not None:
+                    patch_id = patch_ids[feat_id]
+                else:
+                    # torch.randperm produces cudaErrorIllegalAddress for newer versions of PyTorch. https://github.com/taesungp/contrastive-unpaired-translation/issues/83
+                    #patch_id = torch.randperm(feat_reshape.shape[1], device=feats[0].device)
+                    # sample uniformly from the unique classes in the mask
+                    #torch.random.uniform(0, unique_classes.shape[0], (num_patches, ))
+                    
+                    patch_id = np.random.permutation(feat_reshape.shape[1]) 
+                    patch_id = patch_id[:int(min(num_patches, patch_id.shape[0]))]  # takes at most num_patches .to(patch_ids.device)
+                # check if tensor has correct dtype and device otherwise set it
+                if (patch_id.dtype != torch.long) or (patch_id.device==mask.device):
+                    patch_id = torch.tensor(patch_id, dtype=torch.long, device=mask.device)
+                x_sample = feat_reshape[:, patch_id, :].flatten(0, 1)  # reshape(-1, x.shape[1]), -> (B*len(patch_id), C)
+            else:
+                x_sample = feat_reshape
+                patch_id = []
+            
+            if num_patches == 0:
+                x_sample = x_sample.permute(0, 2, 1).reshape([B, x_sample.shape[-1], H, W])
+
+            labels_at_ids.append(x_sample)
+        return labels_at_ids, return_ids
+    
 class PatchSampleF(nn.Module):
     def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[]):
         # potential issues: currently, we use the same patch_ids for multiple images in the batch
@@ -553,21 +602,22 @@ class PatchSampleF(nn.Module):
     def forward(self, feats, num_patches=64, patch_ids=None):
         return_ids = []
         return_feats = []
+        # At first call, create MLPs
         if self.use_mlp and not self.mlp_init:
             self.create_mlp(feats)
         for feat_id, feat in enumerate(feats):
             B, H, W = feat.shape[0], feat.shape[2], feat.shape[3]
-            feat_reshape = feat.permute(0, 2, 3, 1).flatten(1, 2)
+            feat_reshape = feat.permute(0, 2, 3, 1).flatten(1, 2) # B, H*W, C
             if num_patches > 0:
                 if patch_ids is not None:
                     patch_id = patch_ids[feat_id]
                 else:
                     # torch.randperm produces cudaErrorIllegalAddress for newer versions of PyTorch. https://github.com/taesungp/contrastive-unpaired-translation/issues/83
                     #patch_id = torch.randperm(feat_reshape.shape[1], device=feats[0].device)
-                    patch_id = np.random.permutation(feat_reshape.shape[1])
-                    patch_id = patch_id[:int(min(num_patches, patch_id.shape[0]))]  # .to(patch_ids.device)
+                    patch_id = np.random.permutation(feat_reshape.shape[1]) 
+                    patch_id = patch_id[:int(min(num_patches, patch_id.shape[0]))]  # takes at most num_patches .to(patch_ids.device)
                 patch_id = torch.tensor(patch_id, dtype=torch.long, device=feat.device)
-                x_sample = feat_reshape[:, patch_id, :].flatten(0, 1)  # reshape(-1, x.shape[1])
+                x_sample = feat_reshape[:, patch_id, :].flatten(0, 1)  # reshape(-1, x.shape[1]), -> (B*len(patch_id), C)
             else:
                 x_sample = feat_reshape
                 patch_id = []
@@ -575,7 +625,7 @@ class PatchSampleF(nn.Module):
                 mlp = getattr(self, 'mlp_%d' % feat_id)
                 x_sample = mlp(x_sample)
             return_ids.append(patch_id)
-            x_sample = self.l2norm(x_sample)
+            x_sample = self.l2norm(x_sample) # project to unit sphere
 
             if num_patches == 0:
                 x_sample = x_sample.permute(0, 2, 1).reshape([B, x_sample.shape[-1], H, W])
