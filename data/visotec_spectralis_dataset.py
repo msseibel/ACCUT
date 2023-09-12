@@ -56,7 +56,7 @@ def get_tiff_files(directory, startswith, min_samples=None):
         assert len(files['Visotec']) >= min_samples
     return files
 
-
+import torch
 def normalize(x):
     return (x - x.min()) / (x.max() - x.min())
 
@@ -79,8 +79,10 @@ class VisotecSpectralisDataset(BaseDataset):
         print(self.opt)
         print('crop_pos' in self.opt)
         
-        self.transform_A = get_transforms_dict(dict(dataset=self.dir_A.split('/')[-1].lower()))#get_transform(self.opt)
-        self.transform_B = get_transforms_dict(dict(dataset=self.dir_B.split('/')[-1].lower()))#get_transform(self.opt)
+        self.transform_A = get_transforms_dict(
+            dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=['img', 'gt_semantic_seg']))#get_transform(self.opt)
+        self.transform_B = get_transforms_dict(
+            dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=['img']))#get_transform(self.opt)
 
     def __getitem__(self, index):
         if self.opt.isTrain:
@@ -95,31 +97,27 @@ class VisotecSpectralisDataset(BaseDataset):
         A_path_mask = A_path.replace('/X', '/Y')
         A_img = Image.open(A_path)
         A_mask = Image.open(A_path_mask)
-        A_img = Image.fromarray(normalize(np.array(A_img))*255)
-
 
         B_path = self.B_paths[index_B]
         B_img = Image.open(B_path)
-        if self.dir_B.split('/')[-1] == 'Visotec':
-            B_img = np.array(B_img)
-            q05q995 = np.percentile(B_img, [0.5, 99.5])
-            B_img = np.clip(B_img, q05q995[0], q05q995[1])
-            B_img = Image.fromarray(normalize(B_img)*255)
-        else:
-            B_img = Image.fromarray(normalize(np.array(B_img))*255)
+       
+        #if self.opt.input_nc == 3:
+        #    A_img = A_img.convert('RGB')
+        #    B_img = B_img.convert('RGB')
+        resultsA = {'img': np.array(A_img), 
+                    'gt_semantic_seg': np.array(A_mask), 
+                    'seg_fields': ['gt_semantic_seg'],
+                    'ori_size':np.flip(A_img.size)}
         
-        if self.opt.input_nc == 3:
-            A_img = A_img.convert('RGB')
-            B_img = B_img.convert('RGB')
-
-        A = self.transform_A(A_img) 
-        A -= A.min()
-        B = self.transform_B(B_img) 
-        B -= B.min()
-        A /= A.max()
-        B /= B.max()
-
-        mask_B = None
+        resultsB = {'img': np.array(B_img),
+                    'ori_size':np.flip(B_img.size)}
+        resultsA = self.transform_A(resultsA) 
+        resultsB = self.transform_B(resultsB) 
+        
+        A = resultsA['img']
+        mask_A = resultsA['gt_semantic_seg']
+        B = resultsB['img']
+        mask_B = torch.full((1,), float('nan'))
 
 
         name_A = '_'.join(A_path.split('/')[-3:])#os.path.basename(A_path)
@@ -128,12 +126,15 @@ class VisotecSpectralisDataset(BaseDataset):
             name = name_B[:name_B.rfind('.')] + '_' + name_A[:name_A.rfind('.')] + name_A[name_A.rfind('.'):]
         else:
             name = name_A[:name_A.rfind('.')] + name_A[name_A.rfind('.'):]
+        
         result = {'A': A, 'B': B, 
                   'mask_A': mask_A, 
                   'mask_B': mask_B,
-                  'name': name, 'style_name':name_B, 
+                  'name': name, 
+                  'style_name':name_B, 
                   'ori_size':A_img.size, 
-                  'A_paths': A_path, 'B_paths': B_path}
+                  'A_paths': A_path, 
+                  'B_paths': B_path}
         return result
 
     def __len__(self):
