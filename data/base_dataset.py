@@ -8,7 +8,7 @@ import torch.utils.data as data
 from PIL import Image
 import torchvision.transforms as transforms
 from abc import ABC, abstractmethod
-
+from data import transforms as custom_transforms
 
 class BaseDataset(data.Dataset, ABC):
     """This class is an abstract base class (ABC) for datasets.
@@ -79,13 +79,52 @@ def get_params(opt, size):
     return {'crop_pos': (x, y), 'flip': flip}
 
 
+def get_aug_params(opt, size, params=None):
+
+    if 'zoom' in opt.preprocess:
+        if params is None or 'scale_factor' not in params:
+            zoom_level = __random_zoom_params()
+        else:
+            zoom_level = __random_zoom_params(params["scale_factor"])
+
+
+# write a wrapper for every augmentation such that it takes a dict as input and returns a dict as output
+class AugWrapper():
+    def __init__(self, aug):
+        self.aug = aug
+
+    def __call__(self, result):
+        return self.aug(result['img'], **result['params'])
+
+def get_transforms_dict(params):
+    
+    crop_size = (256, 256)
+    if params['dataset']=='visotec':
+        resize_params = dict(img_scale=(484, 524),ratio_range=(0.99, 1.01))
+    elif params['dataset']=='spectralis':
+        resize_params = dict(img_scale=(900, 1000), ratio_range=(.99, 1.01))
+
+    transform_list = [
+        custom_transforms.Resize(keep_ratio=True, **resize_params),
+        custom_transforms.RandomRotate(prob=0.5, degree=(-10, 10)),
+        custom_transforms.RandomFlip(prob=0.5, direction='horizontal'),
+        custom_transforms.RandomCrop(crop_size=crop_size),
+        custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99),
+        custom_transforms.RescaleMinMax(min_val=0, max_val=1.0),
+        custom_transforms.Pad(size=crop_size, pad_val=0, seg_pad_val=255),
+        custom_transforms.ImageToTensor(params['image_keys']),
+    ]
+    return transforms.Compose(transform_list)
+
+
 def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True):
     transform_list = []
     if grayscale:
-        transform_list.append(transforms.Grayscale(1))
+        transform_list.append(AugWrapper(transforms.Grayscale(1)))
+    
     if 'fixsize' in opt.preprocess:
         transform_list.append(transforms.Resize(params["size"], method))
-    if 'resize' in opt.preprocess:
+    elif 'resize' in opt.preprocess:
         osize = [opt.load_size, opt.load_size]
         if "gta2cityscapes" in opt.dataroot:
             osize[0] = opt.load_size // 2
@@ -96,10 +135,12 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
         transform_list.append(transforms.Lambda(lambda img: __scale_shortside(img, opt.load_size, opt.crop_size, method)))
 
     if 'zoom' in opt.preprocess:
-        if params is None:
-            transform_list.append(transforms.Lambda(lambda img: __random_zoom(img, opt.load_size, opt.crop_size, method)))
+        if params is None or 'scale_factor' not in params:
+            zoom_level = __random_zoom_params()
+            transform_list.append(transforms.Lambda(lambda img: __random_zoom(img, opt.load_size, opt.crop_size, zoom_level, method)))
         else:
-            transform_list.append(transforms.Lambda(lambda img: __random_zoom(img, opt.load_size, opt.crop_size, method, factor=params["scale_factor"])))
+            zoom_level = __random_zoom_params(params["scale_factor"])
+            transform_list.append(transforms.Lambda(lambda img: __random_zoom(img, opt.load_size, opt.crop_size, zoom_level, method)))
 
     if 'crop' in opt.preprocess:
         if params is None or 'crop_pos' not in params:
@@ -124,11 +165,12 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
 
     if convert:
         transform_list += [transforms.ToTensor()]
-        if grayscale:
-            transform_list += [transforms.Normalize((0.5,), (0.5,))]
-        else:
-            transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+        #if grayscale:
+        #    transform_list += [transforms.Normalize((0.5,), (0.5,))]
+        #else:
+        #    transform_list += [transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     return transforms.Compose(transform_list)
+
 
 
 def __make_power_2(img, base, method=Image.BICUBIC):
@@ -141,11 +183,18 @@ def __make_power_2(img, base, method=Image.BICUBIC):
     return img.resize((w, h), method)
 
 
-def __random_zoom(img, target_width, crop_width, method=Image.BICUBIC, factor=None):
+def __random_zoom_params(factor=None):
     if factor is None:
         zoom_level = np.random.uniform(0.8, 1.0, size=[2])
-    else:
+    elif type(factor) == float:
         zoom_level = (factor[0], factor[1])
+    else:
+        assert hasattr(factor, '__len__')
+        assert len(factor) == 2
+        zoom_level = factor
+    return zoom_level
+
+def __random_zoom(img, target_width, crop_width, zoom_level, method=Image.BICUBIC):
     iw, ih = img.size
     zoomw = max(crop_width, iw * zoom_level[0])
     zoomh = max(crop_width, ih * zoom_level[1])
@@ -163,8 +212,8 @@ def __scale_shortside(img, target_width, crop_width, method=Image.BICUBIC):
         return img.resize((round(ow * scale), round(oh * scale)), method)
 
 
-def __trim(img, trim_width):
-    ow, oh = img.size
+def __trim_params(image_size, trim_width):
+    ow, oh = image_size
     if ow > trim_width:
         xstart = np.random.randint(ow - trim_width)
         xend = xstart + trim_width
@@ -177,6 +226,13 @@ def __trim(img, trim_width):
     else:
         ystart = 0
         yend = oh
+    return xstart, ystart, xend, yend
+    
+
+def __trim(img, trim_width, trim_params=None):
+    if trim_params is None:
+        trim_params = __trim_params(img.size, trim_width)
+    xstart, ystart, xend, yend = trim_params
     return img.crop((xstart, ystart, xend, yend))
 
 
@@ -198,19 +254,27 @@ def __crop(img, pos, size):
     return img
 
 
-def __patch(img, index, size):
-    ow, oh = img.size
-    nw, nh = ow // size, oh // size
-    roomx = ow - nw * size
-    roomy = oh - nh * size
+def __patch_params(image_size, patch_size):
+    ow, oh = image_size
+    nw, nh = ow // patch_size, oh // patch_size
+    roomx = ow - nw * patch_size
+    roomy = oh - nh * patch_size
     startx = np.random.randint(int(roomx) + 1)
     starty = np.random.randint(int(roomy) + 1)
 
     index = index % (nw * nh)
     ix = index // nh
     iy = index % nh
-    gridx = startx + ix * size
-    gridy = starty + iy * size
+    gridx = startx + ix * patch_size
+    gridy = starty + iy * patch_size
+    return gridx, gridy
+
+def __patch(img, index, size, patch_pos=None):
+    ow, oh = img.size
+    if patch_pos is None:
+        gridx, gridy = __patch_params((ow, oh), size)
+    else:
+        gridx, gridy = patch_pos
     return img.crop((gridx, gridy, gridx + size, gridy + size))
 
 
