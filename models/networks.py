@@ -415,7 +415,6 @@ class GANLoss(nn.Module):
                 loss = F.softplus(prediction).view(bs, -1).mean(dim=1)
         return loss
 
-
 def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', constant=1.0, lambda_gp=10.0):
     """Calculate the gradient penalty loss, used in WGAN-GP paper https://arxiv.org/abs/1704.00028
 
@@ -454,14 +453,15 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
 
 
 class Normalize(nn.Module):
-
     def __init__(self, power=2):
         super(Normalize, self).__init__()
         self.power = power
 
     def forward(self, x):
-        norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
-        out = x.div(norm + 1e-7)
+        #norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
+        #out = x.div(norm + 1e-7)
+        norm = torch.norm(x, p=self.power, dim=1, keepdim=True)
+        out = x / (norm + 1e-7)
         return out
 
 
@@ -615,16 +615,18 @@ class PatchSampleF(nn.Module):
                     # torch.randperm produces cudaErrorIllegalAddress for newer versions of PyTorch. https://github.com/taesungp/contrastive-unpaired-translation/issues/83
                     #patch_id = torch.randperm(feat_reshape.shape[1], device=feats[0].device)
                     patch_id = np.random.permutation(feat_reshape.shape[1]) 
-                    patch_id = patch_id[:int(min(num_patches, patch_id.shape[0]))]  # takes at most num_patches .to(patch_ids.device)
-                patch_id = torch.tensor(patch_id, dtype=torch.long, device=feat.device)
+                    patch_id = torch.tensor(patch_id[:int(min(num_patches, patch_id.shape[0]))], dtype=torch.long, device=feat.device)  # takes at most num_patches .to(patch_ids.device)
+                #patch_id = patch_id.clone().detach().requires_grad_(True)#torch.tensor(patch_id, dtype=torch.long, device=feat.device)
                 x_sample = feat_reshape[:, patch_id, :].flatten(0, 1)  # reshape(-1, x.shape[1]), -> (B*len(patch_id), C)
             else:
                 x_sample = feat_reshape
                 patch_id = []
             if self.use_mlp:
                 mlp = getattr(self, 'mlp_%d' % feat_id)
-                x_sample = mlp(x_sample)
+                x_sample = mlp(x_sample) 
+            assert x_sample.isnan().sum() == 0, 'x_sample has NaNs'
             return_ids.append(patch_id)
+            # very small values? < 1e-5 -> how?
             x_sample = self.l2norm(x_sample) # project to unit sphere
 
             if num_patches == 0:
