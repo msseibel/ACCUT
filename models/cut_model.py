@@ -182,7 +182,7 @@ class CUTModel(BaseModel):
             self.loss_G_GAN = 0.0
 
         if self.opt.lambda_NCE > 0.0:
-            self.loss_NCE = self.calculate_NCE_loss(self.real_A, self.fake_B)
+            self.loss_NCE = self.calculate_NCE_loss(self.real_A, self.fake_B) # seg_mask
         else:
             self.loss_NCE, self.loss_NCE_bd = 0.0, 0.0
 
@@ -199,15 +199,23 @@ class CUTModel(BaseModel):
         n_layers = len(self.nce_layers)
         feat_q = self.netG(tgt, self.nce_layers, encode_only=True)
 
+        #if mask_tgt is not None:
+        #    # resize mask to match the size of the feature maps
+        #    mask_tgt = [torch.nn.functional.interpolate(mask_tgt, size=fq.shape[-2:], mode='nearest') for fq in feat_q]
         if self.opt.flip_equivariance and self.flipped_for_equivariance:
             feat_q = [torch.flip(fq, [3]) for fq in feat_q]
 
+
         feat_k = self.netG(src, self.nce_layers, encode_only=True)
+            
+        # Extract patches
         feat_k_pool, sample_ids = self.netF(feat_k, self.opt.num_patches, None)
-        feat_q_pool, _ = self.netF(feat_q, self.opt.num_patches, sample_ids)
+        feat_q_pool, _ = self.netF(feat_q, self.opt.num_patches, sample_ids) # get 'patches' of the translated image from the same locations as feat_k_pool
+        
 
         total_nce_loss = 0.0
         for f_q, f_k, crit, nce_layer in zip(feat_q_pool, feat_k_pool, self.criterionNCE, self.nce_layers):
+            # f_q: (B*num_patches, C) ???
             loss = crit(f_q, f_k) * self.opt.lambda_NCE
             total_nce_loss += loss.mean()
 
