@@ -79,7 +79,7 @@ class CUTModel(BaseModel):
             self.netD = networks.define_D(opt.output_nc, opt.ndf, opt.netD, opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
 
             # define loss functions
-            self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
+            self.criterionGAN = networks.GANLoss(opt.gan_mode, prob_label_noise=opt.prob_label_noise).to(self.device)
             self.criterionNCE = []
 
             for nce_layer in self.nce_layers:
@@ -104,7 +104,9 @@ class CUTModel(BaseModel):
         self.real_B = self.real_B[:bs_per_gpu]
         self.forward()                     # compute fake images: G(A)
         if self.opt.isTrain:
-            self.compute_D_loss().backward()                  # calculate gradients for D
+            if self.opt.gan_mode!='wgangp':
+                self.compute_D_loss().backward()                  # calculate gradients for D
+            
             self.compute_G_loss().backward()                   # calculate graidents for G
             if self.opt.lambda_NCE > 0.0:
                 self.optimizer_F = torch.optim.Adam(self.netF.parameters(), lr=self.opt.lr, betas=(self.opt.beta1, self.opt.beta2))
@@ -118,8 +120,11 @@ class CUTModel(BaseModel):
         self.set_requires_grad(self.netD, True)
         self.optimizer_D.zero_grad()
         self.loss_D = self.compute_D_loss()
-        self.loss_D.backward()
+        self.loss_D.backward() 
         self.optimizer_D.step()
+        # see: https://github.com/taesungp/contrastive-unpaired-translation/issues/121#issuecomment-1040767944
+        if self.opt.gan_mode=='wgangp':
+            del self.loss_D
 
         # update G
         self.set_requires_grad(self.netD, False)
@@ -166,8 +171,15 @@ class CUTModel(BaseModel):
         self.pred_real = self.netD(self.real_B)
         loss_D_real = self.criterionGAN(self.pred_real, True)
         self.loss_D_real = loss_D_real.mean()
-
-        # combine loss and calculate gradients
+        if self.opt.gan_mode =='wgangp':
+             gradient_penalty, gradients = networks.cal_gradient_penalty(self.netD, self.real_B, self.fake_B, self.device)
+             gradient_penalty.backward(retain_graph=True)
+             #self.loss_D = (self.loss_D_real + self.loss_D_fake ) * 0.5 # not sure about the sign of the gradient penalty. Perhaps it should be -gradient penalty
+        elif self.opt.gan_mode in ['lsgan', 'vanilla', 'nonsaturating']:
+            # combine loss and calculate gradients
+            pass
+        else:
+            raise NotImplementedError
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         return self.loss_D
 
