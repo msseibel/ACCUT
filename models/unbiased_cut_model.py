@@ -15,7 +15,8 @@ def resize(x, size, mode):
         raise NotImplementedError
     
 class UnbiasedCUTModel(BaseModel):
-    """ This class implements the UnbiasedCUT. Its an extension of CUT, described in the paper
+    """ This class implements the UnbiasedCUT by sampling negatives that come from a different class. 
+    Its an extension of CUT, described in the paper
     Contrastive Learning for Unpaired Image-to-Image Translation
     Taesung Park, Alexei A. Efros, Richard Zhang, Jun-Yan Zhu
     ECCV, 2020
