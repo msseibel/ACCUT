@@ -72,7 +72,63 @@ class UnbiasedPatchNCELoss(nn.Module):
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
         self.mask_dtype = torch.uint8 if version.parse(torch.__version__) < version.parse('1.2.0') else torch.bool
         self.max_classes = 5 # todo move to opt
-        
+    
+    def weighted_nce(self, feat_q, feat_k, weights=None):
+        """Implements a weighted nce loss, where weights is a adjacency matrix of size (batch_size, npatches, npatches)
+        that determines decreases the logits for negative samples. This allows us to incorporate a prior knowledge about the
+        matching of the patches.
+        """
+        num_patches = feat_q.shape[0] # B * num_patches_per_img
+        dim = feat_q.shape[1] # num_features
+        feat_k = feat_k.detach()
+
+        # pos logit, calc similarity between query and key (src and tgt patches)
+        l_pos = torch.bmm(
+            # (B * num_patches_per_img, 1, num_features) * (B * num_patches_per_img, num_features, 1) -> (B * num_patches_per_img, 1, 1)
+            feat_q.view(num_patches, 1, -1), feat_k.view(num_patches, -1, 1)) # (num_patches, 1, 1)
+        l_pos = l_pos.view(num_patches, 1)
+
+        # neg logit
+
+        # Should the negatives from the other samples of a minibatch be utilized?
+        # In CUT and FastCUT, we found that it's best to only include negatives
+        # from the same image. Therefore, we set
+        # --nce_includes_all_negatives_from_minibatch as False
+        # However, for single-image translation, the minibatch consists of
+        # crops from the "same" high-resolution image.
+        # Therefore, we will include the negatives from the entire minibatch.
+        if self.opt.nce_includes_all_negatives_from_minibatch:
+            # reshape features as if they are all negatives of minibatch of size 1.
+            batch_dim_for_bmm = 1
+        else:
+            batch_dim_for_bmm = self.opt.batch_size
+
+        # reshape features to batch size (unpack (B*num_patches_per_img, C) -> (B, num_patches_per_img, C))
+        feat_q = feat_q.view(batch_dim_for_bmm, -1, dim)
+        feat_k = feat_k.view(batch_dim_for_bmm, -1, dim)
+        npatches = feat_q.size(1)
+        l_neg_curbatch = torch.bmm(feat_q, feat_k.transpose(2, 1)) # matmul along feature axis -> (batch_size, npatches, npatches)
+        if weights is not None:
+            # increasing the denominator in the NCE loss 
+            # -> the network has 2 options to counteract this:
+            # 1. increase numerator similarity
+            # 2. decrease denominator similarity beyond our weighting intervention
+            l_neg_curbatch += weights 
+
+        # diagonal entries are similarity between same features, and hence meaningless.
+        # just fill the diagonal with very small number, which is exp(-10) and almost zero
+        diagonal = torch.eye(npatches, device=feat_q.device, dtype=self.mask_dtype)[None, :, :] # (1, npatches, npatches)
+        l_neg_curbatch.masked_fill_(diagonal, -10.0) # (batch_size, npatches, npatches)
+        l_neg = l_neg_curbatch.view(-1, npatches) # (num_patches, npatches)
+
+        out = torch.cat((l_pos, l_neg), dim=1) / self.opt.nce_T # (num_patches, 1+npatches) -> first column is pos, rest are negs
+
+        # this vector indicates which entry of out is the positive sample (its always the first column)
+        y_cat = torch.zeros(out.size(0), dtype=torch.long, device=feat_q.device)
+        loss = self.cross_entropy_loss(out, y_cat)
+        return loss
+
+
     def vanilla_nce(self, feat_q, feat_k):
         num_patches = feat_q.shape[0] # B * num_patches_per_img
         dim = feat_q.shape[1] # num_features
@@ -107,6 +163,7 @@ class UnbiasedPatchNCELoss(nn.Module):
 
         # diagonal entries are similarity between same features, and hence meaningless.
         # just fill the diagonal with very small number, which is exp(-10) and almost zero
+        # large negative values will not be considered as potential positive candidates.
         diagonal = torch.eye(npatches, device=feat_q.device, dtype=self.mask_dtype)[None, :, :] # (1, npatches, npatches)
         l_neg_curbatch.masked_fill_(diagonal, -10.0) # (batch_size, npatches, npatches)
         l_neg = l_neg_curbatch.view(-1, npatches) # (num_patches, npatches)
@@ -126,8 +183,12 @@ class UnbiasedPatchNCELoss(nn.Module):
                 break
         return is_single_class
             
-    def forward(self, features_src, features_tgt, classes, num_pairs_should = None):
-        
+    def forward(self, features_src, features_tgt, classes=None, num_pairs_should=None, weights=None):
+        if weights is not None:
+            assert classes is None
+            assert num_pairs_should is None
+            return self.weighted_nce(features_src, features_tgt, weights=weights)
+
         if self.opt.nce_includes_all_negatives_from_minibatch:
             # reshape features as if they are all negatives of minibatch of size 1.
             batch_dim_for_bmm = 1
@@ -160,10 +221,6 @@ class UnbiasedPatchNCELoss(nn.Module):
         if self.check_use_vanilla(classes): # only one was sampled - need to use vanilla nce
             return self.vanilla_nce(features_src, features_tgt)
         
-
-
-
-
 
         logits_pos = torch.bmm(
                     # (B * num_patches_per_img, 1, num_features) * (B * num_patches_per_img, num_features, 1) -> (B * num_patches_per_img, 1, 1)
@@ -207,3 +264,4 @@ class UnbiasedPatchNCELoss(nn.Module):
         assert not torch.isnan(loss).any(), "Loss contains NaN values"
         assert loss.ge(0).all(), "Loss contains negative values"
         return loss
+    
