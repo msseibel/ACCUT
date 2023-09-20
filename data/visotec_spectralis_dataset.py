@@ -20,7 +20,10 @@ def parse_directory(directory, startswith):
     if directory.split('/')[-1] in ['Spectralis', 'Visotec']:
         device = directory.split('/')[-1]
         for sub in os.listdir(directory):
-            for img in os.listdir(os.path.join(directory, sub)):
+            sub_dir = os.path.join(directory, sub)
+            if not os.path.isdir(sub_dir):
+                continue
+            for img in os.listdir(sub_dir):
                 if img.startswith(startswith):
                     path = os.path.join(directory, sub, img)
                     device_counter[device] += 1
