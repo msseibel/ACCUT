@@ -114,7 +114,7 @@ class UnbiasedPatchNCELoss(nn.Module):
             # 1. increase numerator similarity
             # 2. decrease denominator similarity beyond our weighting intervention
             l_neg_curbatch += weights 
-
+        # small change
         # diagonal entries are similarity between same features, and hence meaningless.
         # just fill the diagonal with very small number, which is exp(-10) and almost zero
         diagonal = torch.eye(npatches, device=feat_q.device, dtype=self.mask_dtype)[None, :, :] # (1, npatches, npatches)
