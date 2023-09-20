@@ -299,7 +299,10 @@ class UnbiasedCUTv2Model(BaseModel):
         for f_q, f_k, classes_l, crit, nce_layer in zip(feat_q_pool, feat_k_pool, classes_pool, self.criterionNCE, self.nce_layers):
             #print('NCE loss on layer {}'.format(nce_layer))
             # f_q: (B*num_patches, C) ???
-            class_weights = self.get_weights(classes_l.reshape(-1, self.opt.num_patches), self.class_weight_matrix)
+            if classes_l is None:
+                class_weights = None
+            else:
+                class_weights = self.get_weights(classes_l.reshape(-1, self.opt.num_patches), self.class_weight_matrix)
 
             loss = crit(f_q, f_k, weights=class_weights) * self.opt.lambda_NCE
             # torch.weighted_reduce_loss(loss, weight, reduction='mean')
