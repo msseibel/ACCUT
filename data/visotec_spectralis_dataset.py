@@ -119,6 +119,7 @@ class VisotecSpectralisDataset(BaseDataset):
         
         A = resultsA['img']
         mask_A = resultsA['gt_semantic_seg']
+        mask_A[mask_A==255] = 5 # remap index ignore to max(classes) + 1
         B = resultsB['img']
         mask_B = torch.full((1,), float('nan'))
 
