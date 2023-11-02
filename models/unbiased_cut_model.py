@@ -68,7 +68,7 @@ class UnbiasedCUTModel(BaseModel):
 
         # specify the training losses you want to print out.
         # The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE']
+        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE', 'grad_pen']
         self.visual_names = ['real_A', 'fake_B', 'real_B']
         self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
 
@@ -133,6 +133,10 @@ class UnbiasedCUTModel(BaseModel):
         self.loss_D = self.compute_D_loss()
         self.loss_D.backward()
         self.optimizer_D.step()
+        # see: https://github.com/taesungp/contrastive-unpaired-translation/issues/121#issuecomment-1040767944
+        if self.opt.gan_mode=='wgangp':
+            del self.loss_D
+
 
         # update G
         #print('Updating G')
@@ -183,9 +187,18 @@ class UnbiasedCUTModel(BaseModel):
         self.pred_real = self.netD(self.real_B)
         loss_D_real = self.criterionGAN(self.pred_real, True)
         self.loss_D_real = loss_D_real.mean()
+        
+        if self.opt.gan_mode =='wgangp':
+             self.loss_grad_pen, gradients = networks.cal_gradient_penalty(self.netD, self.real_B, self.fake_B, self.device)
+             #self.loss_grad_pen.backward(retain_graph=True) # using self.loss_ in order to print and plot the loss
 
-        # combine loss and calculate gradients
-        self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
+             self.loss_D = self.loss_grad_pen + (self.loss_D_real + self.loss_D_fake ) * 0.5 # not sure about the sign of the gradient penalty. Perhaps it should be -gradient penalty
+        elif self.opt.gan_mode in ['lsgan', 'vanilla', 'nonsaturating']:
+            # combine loss and calculate gradients
+            self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
+            
+        else:
+            raise NotImplementedError
         return self.loss_D
 
     def compute_G_loss(self):
