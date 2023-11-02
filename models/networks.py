@@ -28,7 +28,7 @@ def get_filter(filt_size=3):
     elif(filt_size == 7):
         a = np.array([1., 6., 15., 20., 15., 6., 1.])
 
-    filt = torch.Tensor(a[:, None] * a[None, :])
+    filt = torch.Tensor(a[:, None] * a[None, :]) # symmetric
     filt = filt / torch.sum(filt)
 
     return filt
@@ -291,7 +291,7 @@ def define_M(netM, gpu_ids=[], opt=None):
     return init_net(net, gpu_ids)
 
 
-def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], opt=None):
+def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, no_antialias=False, input_noise=False, gpu_ids=[], opt=None):
     """Create a discriminator
 
     Parameters:
@@ -325,9 +325,9 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netD == 'basic':  # default PatchGAN classifier
-        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, no_antialias=no_antialias,)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, no_antialias=no_antialias, input_noise=input_noise)
     elif netD == 'n_layers':  # more options
-        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer, no_antialias=no_antialias,)
+        net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer, no_antialias=no_antialias, input_noise=input_noise)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
     elif 'stylegan2' in netD:
@@ -422,7 +422,33 @@ class GANLoss(nn.Module):
                 loss = F.softplus(prediction).view(bs, -1).mean(dim=1)
         return loss
 
-def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', constant=1.0, lambda_gp=10.0):
+import random
+def generate_patch_masks(image_sizes, num_patches=2, patch_size=128, device='cpu'):
+    masks = []
+    for im_size in image_sizes:
+        m = torch.ones(1, *im_size)
+        for i in range(num_patches):
+            x = random.randint(0, im_size[1] - patch_size)
+            y = random.randint(0, im_size[0] - patch_size)
+            m[0, y:y + patch_size, x:x + patch_size] = 0
+        masks += [m.to(device)]
+    return masks
+
+def one_mix(mask, data=None, target=None):
+    if mask is None:
+        return data, target
+    if not (data is None):
+        stackedMask0, _ = torch.broadcast_tensors(mask[0], data[0])
+        data = (stackedMask0 * data[0] +
+                (1 - stackedMask0) * data[1]).unsqueeze(0)
+    if not (target is None):
+        stackedMask0, _ = torch.broadcast_tensors(mask[0], target[0])
+        target = (stackedMask0 * target[0] +
+                  (1 - stackedMask0) * target[1]).unsqueeze(0)
+    return data, target
+
+
+def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', constant=1.0, lambda_gp=10.0, constraint='equal'):
     """Calculate the gradient penalty loss, used in WGAN-GP paper https://arxiv.org/abs/1704.00028
 
     Arguments:
@@ -442,18 +468,31 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
         elif type == 'fake':
             interpolatesv = fake_data
         elif type == 'mixed':
-            alpha = torch.rand(real_data.shape[0], 1, device=device)
-            alpha = alpha.expand(real_data.shape[0], real_data.nelement() // real_data.shape[0]).contiguous().view(*real_data.shape)
+            BATCH_SIZE = real_data.shape[0]
+            alpha = torch.rand(BATCH_SIZE, 1, device=device)
+            alpha = alpha.expand(BATCH_SIZE, real_data.nelement() // BATCH_SIZE).contiguous().view(*real_data.shape)
             interpolatesv = alpha * real_data + ((1 - alpha) * fake_data)
+        elif type == 'patch_mix':
+            batch_size = real_data.shape[0]
+            mix_masks = generate_patch_masks([real_data.shape[-2:]] * batch_size, num_patches=random.randint(0,6), patch_size=128, device=device)
+            interpolatesv = [None] * batch_size
+            for i in range(batch_size):
+                interpolatesv[i], _ = one_mix(mix_masks, data=[real_data[i], fake_data[i]])
+            interpolatesv = torch.cat(interpolatesv)
         else:
             raise NotImplementedError('{} not implemented'.format(type))
         interpolatesv.requires_grad_(True)
         disc_interpolates = netD(interpolatesv)
         gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolatesv,
                                         grad_outputs=torch.ones(disc_interpolates.size()).to(device),
-                                        create_graph=True, retain_graph=True, only_inputs=True)
-        gradients = gradients[0].view(real_data.size(0), -1)  # flat the data
-        gradient_penalty = (((gradients + 1e-16).norm(2, dim=1) - constant) ** 2).mean() * lambda_gp        # added eps
+                                        create_graph=True, retain_graph=True, only_inputs=True)[0]
+        gradients = gradients.view(real_data.size(0), -1)  # flat the data
+        gradient_norms = (gradients + 1e-12).norm(2, dim=1)
+        if constraint=='equal':
+            gradient_penalty = ((gradient_norms - constant) ** 2).mean() * lambda_gp       # added eps
+        elif constraint == 'leq':
+            # 0 for gradient_norms < constant
+            gradient_penalty = (torch.relu(gradient_norms - constant)).mean() * lambda_gp
         return gradient_penalty, gradients
     else:
         return 0.0, None
@@ -960,8 +999,8 @@ class LayerNorm(nn.Module):
             self.beta = nn.Parameter(torch.zeros(num_features))
 
     def forward(self, x):
-        shape = [-1] + [1] * (x.dim() - 1)
-        mean = x.view(x.size(0), -1).mean(1).view(*shape)
+        shape = [-1] + [1] * (x.dim() - 1) 
+        mean = x.view(x.size(0), -1).mean(1).view(*shape) # mean over all dimensions except batch
         std = x.view(x.size(0), -1).std(1).view(*shape)
         x = (x - mean) / (std + self.eps)
 
@@ -1014,12 +1053,12 @@ class ResnetGenerator(nn.Module):
                           norm_layer(ngf * mult * 2),
                           nn.ReLU(True),
                           Downsample(ngf * mult * 2)]
-
+        # Bottleneck
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
-
             model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
+        # Decoder
         for i in range(n_downsampling):  # add upsampling layers
             mult = 2 ** (n_downsampling - i)
             if no_antialias_up:
@@ -1039,11 +1078,14 @@ class ResnetGenerator(nn.Module):
                           nn.ReLU(True)]
         model += [nn.ReflectionPad2d(3)]
         model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
-        model += [nn.Tanh()]
+        model += [nn.Tanh()] # Tanh maps values to -1, 1 range. Ensure that the dataset values are in the same range.
 
         self.model = nn.Sequential(*model)
 
     def forward(self, input, layers=[], encode_only=False):
+        """
+        encode_only: return only the features of the encoder at each stage
+        """
         if -1 in layers:
             layers.append(len(self.model))
         if len(layers) > 0:
@@ -1095,7 +1137,6 @@ class ResnetDecoder(nn.Module):
         n_downsampling = 2
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
-
             model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         for i in range(n_downsampling):  # add upsampling layers
@@ -1130,7 +1171,7 @@ class ResnetEncoder(nn.Module):
     """Resnet-based encoder that consists of a few downsampling + several Resnet blocks
     """
 
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect', no_antialias=False):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect', no_antialias=False, n_downsampling = 2):
         """Construct a Resnet-based encoder
 
         Parameters:
@@ -1154,7 +1195,7 @@ class ResnetEncoder(nn.Module):
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
-        n_downsampling = 2
+        
         for i in range(n_downsampling):  # add downsampling layers
             mult = 2 ** i
             if(no_antialias):
@@ -1169,14 +1210,34 @@ class ResnetEncoder(nn.Module):
 
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
-
             model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         self.model = nn.Sequential(*model)
 
-    def forward(self, input):
-        """Standard forward"""
-        return self.model(input)
+    def forward(self, input, layers=[]):
+        """
+        encode_only: return only the features of the encoder at each stage
+        """
+        if -1 in layers:
+            layers.append(len(self.model))
+        if len(layers) > 0:
+            feat = input
+            feats = []
+            for layer_id, layer in enumerate(self.model):
+                #print(layer_id, layer)
+                feat = layer(feat)
+                if layer_id in layers:
+                    print("%d: adding the output of %s %d" % (layer_id, layer.__class__.__name__, feat.size(1)))
+                    feats.append(feat)
+                else:
+                    print("%d: skipping %s %d" % (layer_id, layer.__class__.__name__, feat.size(1)))
+                    pass
+
+            return feat, feats  # return both output and intermediate features
+        else:
+            """Standard forward"""
+            fake = self.model(input)
+            return fake
 
 
 class ResnetBlock(nn.Module):
@@ -1306,7 +1367,7 @@ class UnetSkipConnectionBlock(nn.Module):
         uprelu = nn.ReLU(True)
         upnorm = norm_layer(outer_nc)
 
-        if outermost:
+        if outermost: # output with tanh activation
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
@@ -1341,10 +1402,17 @@ class UnetSkipConnectionBlock(nn.Module):
             return torch.cat([x, self.model(x)], 1)
 
 
+class NoiseInjectionLayer(nn.Module):
+    def __init__(self):
+        super(NoiseInjectionLayer, self).__init__()
+        
+    def forward(self, x):
+        return x + torch.randn(x.size()).cuda()
+
 class NLayerDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator"""
 
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, no_antialias=False):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, no_antialias=False, input_noise=False):
         """Construct a PatchGAN discriminator
 
         Parameters:
@@ -1358,13 +1426,16 @@ class NLayerDiscriminator(nn.Module):
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
-
+        
+        sequence = []
+        if input_noise:
+            sequence += [NoiseInjectionLayer()]
         kw = 4
         padw = 1
         if(no_antialias):
-            sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+            sequence += [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
         else:
-            sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=1, padding=padw), nn.LeakyReLU(0.2, True), Downsample(ndf)]
+            sequence += [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=1, padding=padw), nn.LeakyReLU(0.2, True), Downsample(ndf)]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
@@ -1460,3 +1531,152 @@ class GroupedChannelNorm(nn.Module):
         std = x.std(dim=2, keepdim=True)
         x_norm = (x - mean) / (std + 1e-7)
         return x_norm.view(*shape)
+
+
+class Concat(nn.Module):
+    def __init__(self, nc1, nc2, out_nc):
+        super().__init__()
+        self.conv = nn.Conv2d(nc1 + nc2, out_nc, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x1, x2):
+        return self.conv(torch.cat([x1, x2], dim=1))
+
+class Add(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x1, x2):
+        return x1 + x2
+
+class AFF(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x1, x2):
+        raise NotImplementedError
+
+class Connector(nn.Module):
+    def __init__(self, nc1, nc2, connect_fun, out_nc=None):
+        super().__init__()
+        
+        self.out_nc = out_nc
+        if connect_fun=='cat':
+            model = Concat(nc1, nc2, out_nc)
+        elif connect_fun=='sum':
+            assert nc1 == nc2
+            self.out_nc = nc1
+            model = Add()
+        elif connect_fun=='AFF':
+            #assert nc1 == nc2
+            #self.out_nc = nc1
+            model = AFF()
+        else:
+            raise NotImplementedError
+        self.model = model
+
+    def forward(self, x1, x2):
+        return self.model(x1, x2)
+    
+class UpsampleBlock(nn.Module):
+    
+    def __init__(self, input_nc, output_nc,  no_antialias=False, use_bias=True, norm_layer=nn.BatchNorm2d):
+        super(UpsampleBlock, self).__init__()
+        
+
+        
+        if(no_antialias):
+            model += [nn.ConvTranspose2d(input_nc, output_nc,
+                                            kernel_size=3, stride=2,
+                                            padding=1, output_padding=1,
+                                            bias=use_bias),
+                        norm_layer(output_nc),
+                        nn.ReLU(True)
+                        ]
+        else:
+            model = [
+                Upsample(input_nc),
+                nn.Conv2d(input_nc, output_nc,
+                                kernel_size=3, stride=1,
+                                padding=1,
+                                bias=use_bias),
+                norm_layer(output_nc),
+                nn.ReLU(True)]
+            
+        self.model = nn.Sequential(*model)
+
+    def forward(self, x):
+        return self.model(x)
+        
+class ConnectResnetDecoder(nn.Module):
+    """Resnet-based decoder that consists of a few Resnet blocks + a few upsampling operations.
+    """
+
+    def __init__(self, input_nc, output_nc, nskip, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, padding_type='reflect', no_antialias=False, output_head='style', connect_fun='cat'):
+        """Construct a Resnet-based decoder
+
+        Parameters:
+            input_nc (int)      -- (not used) the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            nskip (list)        -- the number of channels in the skip connections
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(ConnectResnetDecoder, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+        
+        neck = []
+        n_upsampling = len(nskip)
+        mult = 2 ** n_upsampling
+        for i in range(n_blocks):       # add ResNet blocks
+            print('Num bottleneck features: ',ngf * mult)
+            neck += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+        self.neck = nn.Sequential(*neck)
+
+
+        skip_nc = 0
+        prev_nc = ngf * mult
+        conv_upsample_layers = []
+        connect_upsample_layers = []
+        for i in range(n_upsampling):  # add upsampling layers
+            
+            mult = 2 ** (n_upsampling - i)
+            up_nc = int(ngf * mult//2)
+            conv_upsample_layers.append(
+                UpsampleBlock(prev_nc, up_nc, no_antialias=no_antialias, use_bias=use_bias, norm_layer=norm_layer)
+            )
+            skip_nc = nskip[i]
+            connect_block = Connector(up_nc, skip_nc, connect_fun=connect_fun, out_nc=up_nc)
+            prev_nc = connect_block.out_nc
+            connect_upsample_layers.append(connect_block)
+
+
+        self.conv_upsample_layers = nn.ModuleList(conv_upsample_layers)
+        self.connect_upsample_layers = nn.ModuleList(connect_upsample_layers)
+
+        if output_head == 'style':
+            self.output_head = nn.Sequential(
+                nn.ReflectionPad2d(3),
+                nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0),
+                nn.Tanh()
+                )
+        elif output_head == 'mask':
+            self.output_head = nn.Conv2d(ngf, output_nc, kernel_size=1, padding=0)
+        else:
+            raise NotImplementedError
+
+    def forward(self, input, skip_features=[]):
+        """Standard forward"""
+        x = self.neck(input)
+        for i, (up_layer, merge_layer) in enumerate(zip(self.conv_upsample_layers, self.connect_upsample_layers)):
+            x = up_layer(x)
+            x = merge_layer(x, skip_features[i])
+        x = self.output_head(x)
+        return x
+    
