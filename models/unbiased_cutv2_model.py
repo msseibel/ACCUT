@@ -71,17 +71,21 @@ class UnbiasedCUTv2Model(BaseModel):
         # Interpretation: The vanilla NCE treats all pairs of patches the same, irrespective of their semantic class.
         # We allow same class patches to be more similar to the anchor patch by subtracting -1.
         # Intuitively, this means that the repelling force between same-class patches is smaller
-        self.class_weight_matrix = torch.tensor([[-1., -0.1, 1, 1, 2.], 
-                                                 [-0.1, -1., 1, 1, 1.],
-                                                 [1.0, 1., -1., 1, 1.],
-                                                 [1.0, 1., 1, -1.,  1.],
-                                                 [2.0, 1., 1, 1,  -1.]]).to(self.device)
+        
+        b_ign = 2 # strongly repell
+        # Classbody, Retina, SRF, PED, Choroid
+        self.class_weight_matrix = torch.tensor([[-1., -0.1, 1, 1, 1.5, b_ign], 
+                                                 [-0.1, -1., 1, 1, 1., b_ign],
+                                                 [1.0, 1., -1., 1, 1., b_ign],
+                                                 [1.0, 1., 1, -1.,  1., b_ign],
+                                                 [1.5, 1., 1, 1,  -1., b_ign],
+                                                 [b_ign]*5 + [-1.]]).to(self.device)
         
 
 
         # specify the training losses you want to print out.
         # The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE']
+        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE', 'grad_pen']
         self.visual_names = ['real_A', 'fake_B', 'real_B']
         self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
 
@@ -146,6 +150,9 @@ class UnbiasedCUTv2Model(BaseModel):
         self.loss_D = self.compute_D_loss()
         self.loss_D.backward()
         self.optimizer_D.step()
+        # see: https://github.com/taesungp/contrastive-unpaired-translation/issues/121#issuecomment-1040767944
+        if self.opt.gan_mode=='wgangp':
+            del self.loss_D
 
         # update G
         #print('Updating G')
@@ -193,10 +200,18 @@ class UnbiasedCUTv2Model(BaseModel):
         pred_fake = self.netD(fake)
         self.loss_D_fake = self.criterionGAN(pred_fake, False).mean()
         # Real
-        self.pred_real = self.netD(self.real_B)
-        loss_D_real = self.criterionGAN(self.pred_real, True)
+        pred_real = self.netD(self.real_B)
+        loss_D_real = self.criterionGAN(pred_real, True)
         self.loss_D_real = loss_D_real.mean()
-
+        if self.opt.gan_mode =='wgangp':
+             self.loss_grad_pen, gradients = networks.cal_gradient_penalty(self.netD, self.real_B, self.fake_B, self.device)
+             self.loss_grad_pen.backward(retain_graph=True)
+             #self.loss_D = (self.loss_D_real + self.loss_D_fake ) * 0.5 # not sure about the sign of the gradient penalty. Perhaps it should be -gradient penalty
+        elif self.opt.gan_mode in ['lsgan', 'vanilla', 'nonsaturating']:
+            # combine loss and calculate gradients
+            pass
+        else:
+            raise NotImplementedError
         # combine loss and calculate gradients
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         return self.loss_D
@@ -241,7 +256,13 @@ class UnbiasedCUTv2Model(BaseModel):
         #i, j, k = torch.meshgrid(torch.arange(batch_size), torch.arange(seq_length), torch.arange(seq_length))
         #i, j, k = i.to(self.device), j.to(self.device), k.to(self.device)
         #weight_matrix = adjacency_matrix[y[i, j], y[i, k]]
-        weight_matrix = torch.stack([adjacency_matrix[batch, :][:, batch] for batch in y])
+        weight_matrix = []
+        for batch in y:
+            #print(batch)
+            #assert batch.max()<6
+            #assert batch.min()>=0
+            weight_matrix+=[adjacency_matrix.clone().detach()[batch, :][:, batch]]
+        weight_matrix = torch.stack(weight_matrix)
         return weight_matrix
 
 
@@ -303,8 +324,9 @@ class UnbiasedCUTv2Model(BaseModel):
                 class_weights = None
             else:
                 class_weights = self.get_weights(classes_l.reshape(-1, self.opt.num_patches), self.class_weight_matrix)
-
+            #class_weights = None
             loss = crit(f_q, f_k, weights=class_weights) * self.opt.lambda_NCE
+            #del class_weights
             # torch.weighted_reduce_loss(loss, weight, reduction='mean')
             total_nce_loss += loss.mean()
 
