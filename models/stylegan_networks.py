@@ -485,7 +485,7 @@ class Generator(nn.Module):
         self.num_layers = (self.log_size - 2) * 2 + 1
 
         self.convs = nn.ModuleList()
-        self.upsamples = nn.ModuleList()
+        #self.upsamples = nn.ModuleList() unused
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
 
@@ -716,7 +716,7 @@ class StyleGAN2Discriminator(nn.Module):
             1024: int(16 * channel_multiplier),
         }
 
-        convs = [ConvLayer(3, channels[size], 1)]
+        convs = [ConvLayer(input_nc, channels[size], 1)]
 
         log_size = int(math.log(size, 2))
 
