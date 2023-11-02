@@ -81,6 +81,7 @@ class UnbiasedPatchNCELoss(nn.Module):
         num_patches = feat_q.shape[0] # B * num_patches_per_img
         dim = feat_q.shape[1] # num_features
         feat_k = feat_k.detach()
+        weights = weights.detach()
 
         # pos logit, calc similarity between query and key (src and tgt patches)
         l_pos = torch.bmm(
