@@ -64,7 +64,9 @@ def normalize(x):
     return (x - x.min()) / (x.max() - x.min())
 
 class VisotecSpectralisDataset(BaseDataset):
-
+    """
+    Generator tanh maps values to -1, 1 range. Ensure that the dataset values are in the same range.
+    """
     def __init__(self, opt):
         BaseDataset.__init__(self, opt)
         self.dir_A = opt.content_path
