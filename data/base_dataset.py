@@ -110,7 +110,7 @@ def get_transforms_dict(params):
         custom_transforms.RandomFlip(prob=0.5, direction='horizontal'),
         custom_transforms.RandomCrop(crop_size=crop_size),
         custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99),
-        custom_transforms.RescaleMinMax(min_val=0, max_val=1.0),
+        custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0),
         custom_transforms.Pad(size=crop_size, pad_val=0, seg_pad_val=255),
         custom_transforms.ImageToTensor(params['image_keys']),
     ]
