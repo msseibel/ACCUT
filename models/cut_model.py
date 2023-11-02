@@ -35,7 +35,8 @@ class CUTModel(BaseModel):
         parser.add_argument('--flip_equivariance',
                             type=util.str2bool, nargs='?', const=True, default=False,
                             help="Enforce flip-equivariance as additional regularization. It's used by FastCUT, but not CUT")
-
+        parser.add_argument('--D_iters', type=int, default=1, help='number of discriminator updates per generator update.')
+        parser.add_argument('--input_noise', type=util.str2bool, nargs='?', const=True, default=False, help='add noise to the input of the discriminator')
         parser.set_defaults(pool_size=0)  # no image pooling
 
         opt, _ = parser.parse_known_args()
@@ -59,8 +60,11 @@ class CUTModel(BaseModel):
         # specify the training losses you want to print out.
         # The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE']
+        if opt.gan_mode =='wgangp':
+            self.loss_names += ['grad_pen']
         self.visual_names = ['real_A', 'fake_B', 'real_B']
         self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
+        self.D_updates_per_G = opt.D_iters
 
         if opt.nce_idt and self.isTrain:
             self.loss_names += ['NCE_Y']
@@ -76,7 +80,8 @@ class CUTModel(BaseModel):
         self.netF = networks.define_F(opt.input_nc, opt.netF, opt.normG, not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
 
         if self.isTrain:
-            self.netD = networks.define_D(opt.output_nc, opt.ndf, opt.netD, opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
+            self.netD = networks.define_D(
+                opt.output_nc, opt.ndf, opt.netD, opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, opt.no_antialias, opt.input_noise, self.gpu_ids, opt)
 
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode, prob_label_noise=opt.prob_label_noise).to(self.device)
@@ -113,18 +118,24 @@ class CUTModel(BaseModel):
                 self.optimizers.append(self.optimizer_F)
 
     def optimize_parameters(self):
-        # forward
-        self.forward()
 
-        # update D
-        self.set_requires_grad(self.netD, True)
-        self.optimizer_D.zero_grad()
-        self.loss_D = self.compute_D_loss()
-        self.loss_D.backward() 
-        self.optimizer_D.step()
-        # see: https://github.com/taesungp/contrastive-unpaired-translation/issues/121#issuecomment-1040767944
-        if self.opt.gan_mode=='wgangp':
-            del self.loss_D
+        self.set_requires_grad(self.netG, False)
+        for t in np.arange(self.D_updates_per_G):
+            if t == (self.D_updates_per_G -1):
+                self.set_requires_grad(self.netG, True)
+            
+            # forward
+            self.forward()
+
+            # update D
+            self.set_requires_grad(self.netD, True)
+            self.optimizer_D.zero_grad()
+            self.loss_D = self.compute_D_loss()
+            self.loss_D.backward() 
+            self.optimizer_D.step()
+            # see: https://github.com/taesungp/contrastive-unpaired-translation/issues/121#issuecomment-1040767944
+            #if self.opt.gan_mode=='wgangp':
+            #    del self.loss_D
 
         # update G
         self.set_requires_grad(self.netD, False)
@@ -168,19 +179,20 @@ class CUTModel(BaseModel):
         pred_fake = self.netD(fake)
         self.loss_D_fake = self.criterionGAN(pred_fake, False).mean()
         # Real
-        self.pred_real = self.netD(self.real_B)
-        loss_D_real = self.criterionGAN(self.pred_real, True)
+        pred_real = self.netD(self.real_B)
+        loss_D_real = self.criterionGAN(pred_real, True)
         self.loss_D_real = loss_D_real.mean()
         if self.opt.gan_mode =='wgangp':
-             gradient_penalty, gradients = networks.cal_gradient_penalty(self.netD, self.real_B, self.fake_B, self.device)
-             gradient_penalty.backward(retain_graph=True)
+            self.loss_grad_pen, gradients = networks.cal_gradient_penalty(self.netD, self.real_B, self.fake_B, self.device, lambda_gp=10, type='mixed',constraint='equal')
+            self.loss_grad_pen = self.loss_grad_pen
+            self.loss_grad_pen.backward(retain_graph=True) 
              #self.loss_D = (self.loss_D_real + self.loss_D_fake ) * 0.5 # not sure about the sign of the gradient penalty. Perhaps it should be -gradient penalty
-        elif self.opt.gan_mode in ['lsgan', 'vanilla', 'nonsaturating']:
-            # combine loss and calculate gradients
-            pass
-        else:
-            raise NotImplementedError
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
+        #elif self.opt.gan_mode in ['lsgan', 'vanilla', 'nonsaturating']:
+        #    # combine loss and calculate gradients
+        #    self.loss_D = (self.loss_D_fake + self.loss_D_real) *0.5
+        #else:
+        #    raise NotImplementedError
         return self.loss_D
 
     def compute_G_loss(self):
