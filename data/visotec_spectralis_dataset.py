@@ -100,7 +100,7 @@ class VisotecSpectralisDataset(BaseDataset):
 
         A_path = self.A_paths[index_A]
         A_path_mask = A_path.replace('/X', '/Y')
-        A_img = Image.open(A_path)
+        A_img  = Image.open(A_path)
         A_mask = Image.open(A_path_mask)
 
         B_path = self.B_paths[index_B]
@@ -134,8 +134,8 @@ class VisotecSpectralisDataset(BaseDataset):
             name = name_A[:name_A.rfind('.')] + name_A[name_A.rfind('.'):]
         
         result = {'A': A, 'B': B, 
-                  'mask_A': mask_A, 
-                  'mask_B': mask_B,
+                  'mask_A': mask_A.type(torch.long), 
+                  'mask_B': mask_B.type(torch.long),
                   'name': name, 
                   'style_name':name_B, 
                   'ori_size':A_img.size, 
