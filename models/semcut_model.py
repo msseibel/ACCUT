@@ -134,7 +134,6 @@ class SemCUTModel(BaseModel):
         # compute fake images: G(A)
         self.forward()  # prepares da     
         self.forward_style()
-        self.encode_fake()
         
         if self.opt.isTrain:
             if self.opt.gan_mode!='wgangp':
@@ -207,21 +206,9 @@ class SemCUTModel(BaseModel):
         real_latent, mres_enc = self.encode_real()
         real_mask, _ = self.decode_seg(real_latent, mres_enc)
         real_mask_A = real_mask[:self.real_A.size(0)]
-        #self.optimize_seg(real_mask_A)      
-        self.loss_seg = 0.
-        #if self.opt.nce_idt:
-            #self.real_latent_B = real_latent[self.real_A.size(0):]
-            #self.idt_latent_B  = tgt_latents[self.real_A.size(0):]
-        #    self.real_mres_enc_B = [el[self.real_A.size(0):] for el in mres_enc]
-        #    self.idt_mres_enc_B = [el[self.real_A.size(0):] for el in mres_enc_fake]
-        #    self.idt_B = self.fake[self.real_A.size(0):]
-        
-        # name the variables for convenience
-        #self.real_latent_A = real_latent[:self.real_A.size(0)]
-        #self.fake_latent_B = tgt_latents[:self.real_A.size(0)]
-        #self.real_mres_enc_A = [el[:self.real_A.size(0)] for el in mres_enc]
-        #self.fake_mres_enc_B = [el[:self.real_A.size(0)] for el in mres_enc_fake]
-        self.forward_style() 
+        self.optimize_seg(real_mask_A)      
+        #self.loss_seg = 0.
+        self.forward_style()
         #with torch.autograd.set_detect_anomaly(True):
         self.optimize_style()
             
@@ -242,6 +229,10 @@ class SemCUTModel(BaseModel):
 
     def encode_real(self):
         real_latent, mres_enc = self.netenc(self.real, layers=self.nce_layers) 
+        # set output attributes
+        self.real_mres_enc_A = [el[:self.real_A.size(0)] for el in mres_enc]
+        if self.opt.nce_idt:
+            self.real_mres_enc_B = [el[self.real_A.size(0):] for el in mres_enc]
         return real_latent, mres_enc
     
     def encode_fake(self):
@@ -266,14 +257,15 @@ class SemCUTModel(BaseModel):
         real_latent, mres_enc = self.encode_real()
         with torch.no_grad():
             _, mres_mask = self.decode_seg(real_latent, mres_enc)
+            #mres_mask = [torch.zeros_like(el) for el in mres_mask]
         self.fake = self.decode_style(real_latent, mres_mask)
         
-        # set output attributes
-        self.real_mres_enc_A = [el[:self.real_A.size(0)] for el in mres_enc]
         self.fake_B = self.fake[:self.real_A.size(0)] # required for the GAN loss
         if self.opt.nce_idt:
-            self.real_mres_enc_B = [el[self.real_A.size(0):] for el in mres_enc]
             self.idt_B = self.fake[self.real_A.size(0):]
+        
+        if self.opt.isTrain:
+            self.encode_fake()
         return self.fake
         
     
@@ -347,7 +339,7 @@ class SemCUTModel(BaseModel):
         self.loss_G = self.loss_G_GAN + loss_NCE_both
         return self.loss_G
 
-    def calculate_NCE_loss(self, feat_q, feat_k):
+    def calculate_NCE_loss(self, feat_k, feat_q):
         """
         feat_q: features of the source image
         feat_k: features of the translated image
