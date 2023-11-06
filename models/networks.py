@@ -214,7 +214,54 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[], debug=False, i
         init_weights(net, init_type, init_gain=init_gain, debug=debug)
     return net
 
+def define_encoder(input_nc, output_nc, ngf, net_enc, norm='batch', use_dropout=False, 
+                   init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], n_levels=2, opt=None):
+    net = None
+    norm_layer = get_norm_layer(norm_type=norm)
+    if net_enc == 'resnet_9blocks':
+        net = ResnetEncoder(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, 
+                            no_antialias=no_antialias, n_downsampling=n_levels, n_blocks=9)
+    elif net_enc == 'resnet_6blocks':
+        net = ResnetEncoder(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, 
+                            no_antialias=no_antialias, n_downsampling=n_levels, n_blocks=6)
+    elif net_enc == 'resnet_4blocks':
+        net = ResnetEncoder(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, 
+                            no_antialias=no_antialias, n_downsampling=n_levels, n_blocks=4)
+    else:
+        raise NotImplementedError('Encoder model name [%s] is not recognized' % net_enc)
+    
+    return init_net(net, init_type, init_gain, gpu_ids, initialize_weights=('stylegan2' not in net_enc))
 
+def define_decoder(input_nc, output_nc, ngf, net_dec, norm='batch', use_dropout=False, 
+                   init_type='normal', init_gain=0.02, no_antialias_up=False, gpu_ids=[], n_levels=2, 
+                   connect_fun='cat', output_head='style', opt=None):
+    """
+    skip_nc: list of channels to skip from the encoder
+    output_head: 'style' or 'mask'
+    connect_fun: 'cat', 'add', 'AFF', 'MSCAM'
+    """
+    net = None
+    norm_layer = get_norm_layer(norm_type=norm)
+    
+    if net_dec == 'resnet_9blocks':
+         #input_nc, output_nc, ngf=64, n_upsampling=2, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, 
+        #padding_type='reflect', no_antialias_up=False, output_head='style', connect_fun='cat', opt=None)
+        net = ConnectResnetDecoder(input_nc, output_nc, ngf, n_upsampling=n_levels, norm_layer=norm_layer, use_dropout=use_dropout, 
+        no_antialias_up=no_antialias_up, n_blocks=9, connect_fun=connect_fun, output_head=output_head, opt=opt)
+    elif net_dec == 'resnet_6blocks':
+        net = ConnectResnetDecoder(input_nc, output_nc, ngf, n_upsampling=n_levels, norm_layer=norm_layer, use_dropout=use_dropout, 
+        no_antialias_up=no_antialias_up, n_blocks=6, connect_fun=connect_fun, output_head=output_head, opt=opt)
+    elif net_dec == 'resnet_4blocks':
+        net = ConnectResnetDecoder(input_nc, output_nc, ngf, n_upsampling=n_levels, norm_layer=norm_layer, use_dropout=use_dropout, 
+        no_antialias_up=no_antialias_up, n_blocks=4, connect_fun=connect_fun,  output_head=output_head, opt=opt)
+    elif net_dec == 'resnet_2blocks':
+        net = ConnectResnetDecoder(input_nc, output_nc, ngf, n_upsampling=n_levels, norm_layer=norm_layer, use_dropout=use_dropout, 
+        no_antialias_up=no_antialias_up, n_blocks=2, connect_fun=connect_fun, output_head=output_head, opt=opt)
+    else:
+        raise NotImplementedError('Encoder model name [%s] is not recognized' % net_dec)
+    
+    return init_net(net, init_type, init_gain, gpu_ids, initialize_weights=('stylegan2' not in net_dec))
+    
 def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal',
              init_gain=0.02, no_antialias=False, no_antialias_up=False, gpu_ids=[], opt=None):
     """Create a generator
@@ -1227,6 +1274,81 @@ class ResnetEncoder(nn.Module):
                 #print(layer_id, layer)
                 feat = layer(feat)
                 if layer_id in layers:
+                    #print("%d: adding the output of %s %d" % (layer_id, layer.__class__.__name__, feat.size(1)))
+                    feats.append(feat)
+                else:
+                    #print("%d: skipping %s %d" % (layer_id, layer.__class__.__name__, feat.size(1)))
+                    pass
+
+            return feat, feats  # return both output and intermediate features
+        else:
+            """Standard forward"""
+            fake = self.model(input)
+            return fake
+
+class ResnetEncoderModules(nn.Module):
+    """Resnet-based encoder that consists of a few downsampling + several Resnet blocks
+    """
+
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect', no_antialias=False, n_downsampling = 2):
+        """Construct a Resnet-based encoder
+
+        Parameters:
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(ResnetEncoder, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        model = []
+        input_block = nn.Sequential(
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+            norm_layer(ngf),
+            nn.ReLU(True))
+        model+=[input_block]
+
+        
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            if(no_antialias):
+                model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                          norm_layer(ngf * mult * 2),
+                          nn.ReLU(True)]
+            else:
+                model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=1, padding=1, bias=use_bias),
+                          norm_layer(ngf * mult * 2),
+                          nn.ReLU(True),
+                          Downsample(ngf * mult * 2)]
+
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):       # add ResNet blocks
+            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+
+        self.model = nn.Sequential(*model)
+
+    def forward(self, input, layers=[]):
+        """
+        encode_only: return only the features of the encoder at each stage
+        """
+        if -1 in layers:
+            layers.append(len(self.model))
+        if len(layers) > 0:
+            feat = input
+            feats = []
+            for layer_id, layer in enumerate(self.model):
+                #print(layer_id, layer)
+                feat = layer(feat)
+                if layer_id in layers:
                     print("%d: adding the output of %s %d" % (layer_id, layer.__class__.__name__, feat.size(1)))
                     feats.append(feat)
                 else:
@@ -1611,7 +1733,9 @@ class ConnectResnetDecoder(nn.Module):
     """Resnet-based decoder that consists of a few Resnet blocks + a few upsampling operations.
     """
 
-    def __init__(self, input_nc, output_nc, nskip, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, padding_type='reflect', no_antialias=False, output_head='style', connect_fun='cat'):
+    def __init__(
+        self, input_nc, output_nc, ngf=64, n_upsampling=2, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, 
+        padding_type='reflect', no_antialias_up=False, output_head='style', connect_fun='cat', opt=None):
         """Construct a Resnet-based decoder
 
         Parameters:
@@ -1632,7 +1756,7 @@ class ConnectResnetDecoder(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
         
         neck = []
-        n_upsampling = len(nskip)
+        nskip = [ngf * 2 ** i for i in range(n_upsampling)[::-1]]
         mult = 2 ** n_upsampling
         for i in range(n_blocks):       # add ResNet blocks
             print('Num bottleneck features: ',ngf * mult)
@@ -1649,7 +1773,7 @@ class ConnectResnetDecoder(nn.Module):
             mult = 2 ** (n_upsampling - i)
             up_nc = int(ngf * mult//2)
             conv_upsample_layers.append(
-                UpsampleBlock(prev_nc, up_nc, no_antialias=no_antialias, use_bias=use_bias, norm_layer=norm_layer)
+                UpsampleBlock(prev_nc, up_nc, no_antialias=no_antialias_up, use_bias=use_bias, norm_layer=norm_layer)
             )
             skip_nc = nskip[i]
             connect_block = Connector(up_nc, skip_nc, connect_fun=connect_fun, out_nc=up_nc)
@@ -1671,12 +1795,25 @@ class ConnectResnetDecoder(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, input, skip_features=[]):
-        """Standard forward"""
+    def forward(self, input, skip_features, layers=[]):
+        
         x = self.neck(input)
-        for i, (up_layer, merge_layer) in enumerate(zip(self.conv_upsample_layers, self.connect_upsample_layers)):
-            x = up_layer(x)
-            x = merge_layer(x, skip_features[i])
-        x = self.output_head(x)
-        return x
-    
+        if not layers or len(layers) == 0:
+            """Standard forward"""
+            for i, (up_layer, merge_layer) in enumerate(zip(self.conv_upsample_layers, self.connect_upsample_layers)):
+                x = up_layer(x)
+                x = merge_layer(x, skip_features[i])
+            x = self.output_head(x)
+            return x
+        else:
+            feats = []
+            for i, (up_layer, merge_layer) in enumerate(zip(self.conv_upsample_layers, self.connect_upsample_layers)):
+                x = up_layer(x)
+                x = merge_layer(x, skip_features[i])
+                if i in layers:
+                    feats.append(x)
+                #if i == layers[-1]:
+                #    return feats
+            x = self.output_head(x)
+            return x, feats
+        
