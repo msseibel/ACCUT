@@ -1,8 +1,9 @@
 # Obtained from: https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0
 # Modifications: Support override_scale in Resize
 
-import mmcv
+
 import numpy as np
+import mmcv
 from mmcv.utils import deprecated_api_warning, is_tuple_of
 from numpy import random
 import torch
