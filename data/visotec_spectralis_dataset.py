@@ -72,10 +72,32 @@ class VisotecSpectralisDataset(BaseDataset):
         self.dir_A = opt.content_path
         self.dir_B = opt.style_path
 
-        filesA = get_tiff_files(self.dir_A,'X', None)
-        filesB = get_tiff_files(self.dir_B,'X', None)
+        
+        # Some images don't have an associated segmentation. 
+        # startswith='Y' ensures that we only load images with a segmentation
+        image_keys_src = ['img']
+        if opt.use_seg_src:
+            startswith_src = 'Y'
+            image_keys_src.append('gt_semantic_seg')
+        else:
+            startswith_src = 'X'
+        
+        image_keys_tgt = ['img']
+        if opt.use_seg_tgt:
+            startswith_tgt = 'Y'
+            image_keys_tgt.append('gt_semantic_seg')
+        else:
+            startswith_src = 'X'
+        
+        filesA = get_tiff_files(self.dir_A,startswith_src, None)
+        filesB = get_tiff_files(self.dir_B,startswith_tgt, None)
+        
         self.A_paths = np.concatenate(list(filesA.values()))#.copy()#sorted(make_dataset(self.dir_A, opt.max_dataset_size))
         self.B_paths = np.concatenate(list(filesB.values()))#.copy()#sorted(get_tiff_files(self.dir_B,'X'))#sorted(make_dataset(self.dir_B, opt.max_dataset_size))
+        # If image name startswith 'Y' then we have to map the image name back to 'X' due to further processing
+        self.A_paths = [el.replace('/Y', '/X') for el in self.A_paths]
+        self.B_paths = [el.replace('/Y', '/X') for el in self.B_paths]
+
         print('Num Files A: ', len(self.A_paths))
         print('Num Files B: ', len(self.B_paths))
         
@@ -85,9 +107,9 @@ class VisotecSpectralisDataset(BaseDataset):
         print('crop_pos' in self.opt)
         
         self.transform_A = get_transforms_dict(
-            dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=['img', 'gt_semantic_seg']))#get_transform(self.opt)
+            dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=image_keys_src))#get_transform(self.opt)
         self.transform_B = get_transforms_dict(
-            dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=['img']))#get_transform(self.opt)
+            dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=image_keys_tgt))#get_transform(self.opt)
 
     def __getitem__(self, index):
         if self.opt.isTrain:
@@ -104,8 +126,9 @@ class VisotecSpectralisDataset(BaseDataset):
         A_mask = Image.open(A_path_mask)
 
         B_path = self.B_paths[index_B]
+        B_path_mask = B_path.replace('/X', '/Y')
         B_img = Image.open(B_path)
-       
+        B_mask = Image.open(B_path_mask)
         #if self.opt.input_nc == 3:
         #    A_img = A_img.convert('RGB')
         #    B_img = B_img.convert('RGB')
@@ -115,7 +138,10 @@ class VisotecSpectralisDataset(BaseDataset):
                     'ori_size':np.flip(A_img.size)}
         
         resultsB = {'img': np.array(B_img),
-                    'ori_size':np.flip(B_img.size)}
+                    'gt_semantic_seg': np.array(B_mask), 
+                    'seg_fields': ['gt_semantic_seg'],
+                    'ori_size':np.flip(B_img.size),
+                    }
         resultsA = self.transform_A(resultsA) 
         resultsB = self.transform_B(resultsB) 
         
@@ -123,8 +149,10 @@ class VisotecSpectralisDataset(BaseDataset):
         mask_A = resultsA['gt_semantic_seg']
         mask_A[mask_A==255] = 5 # remap index ignore to max(classes) + 1
         B = resultsB['img']
-        mask_B = torch.full((1,), float('nan'))
-
+        #mask_B = torch.full((1,), float('nan'))
+        mask_B = resultsB['gt_semantic_seg']
+        mask_B[mask_B==255] = 5 # remap index ignore to max(classes) + 1
+        
 
         name_A = '_'.join(A_path.split('/')[-3:])#os.path.basename(A_path)
         name_B = '_'.join(B_path.split('/')[-3:])#os.path.basename(B_path)

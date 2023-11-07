@@ -238,7 +238,7 @@ def define_decoder(input_nc, output_nc, ngf, net_dec, norm='batch', use_dropout=
     """
     skip_nc: list of channels to skip from the encoder
     output_head: 'style' or 'mask'
-    connect_fun: 'cat', 'add', 'AFF', 'MSCAM'
+    connect_fun: None,'cat', 'add', 'AFF', 'MSCAM'
     """
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
@@ -1680,7 +1680,7 @@ class AFF(nn.Module):
 class Connector(nn.Module):
     def __init__(self, nc1, nc2, connect_fun, out_nc=None):
         super().__init__()
-        
+        self.connect_fun = connect_fun
         self.out_nc = out_nc
         if connect_fun=='cat':
             model = Concat(nc1, nc2, out_nc)
@@ -1692,12 +1692,19 @@ class Connector(nn.Module):
             #assert nc1 == nc2
             #self.out_nc = nc1
             model = AFF()
+        elif connect_fun is None:
+            # Fully connected feature network. 
+            model = nn.Conv2d(nc1, out_nc, kernel_size=1, stride=1, padding=0)
         else:
             raise NotImplementedError
         self.model = model
 
-    def forward(self, x1, x2):
-        return self.model(x1, x2)
+    def forward(self, x1, x2=None):
+        if  self.connect_fun is None:
+            assert x2 is None
+            return self.model(x1)
+        else:
+            return self.model(x1, x2)
     
 class UpsampleBlock(nn.Module):
     

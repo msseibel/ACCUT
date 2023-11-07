@@ -151,6 +151,10 @@ class BaseModel(ABC):
         for name in self.visual_names:
             if isinstance(name, str):
                 visual_ret[name] = getattr(self, name)
+                if visual_ret[name].max() > 1:
+                    visual_ret[name][0,0,0,0] = 5 # hack to have the same largest value for gt and predictions
+                    # normalize 0 1
+                    visual_ret[name] = (visual_ret[name] - visual_ret[name].min()) / (visual_ret[name].max() - visual_ret[name].min())
         return visual_ret
 
     def get_current_losses(self):

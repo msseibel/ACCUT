@@ -31,9 +31,10 @@ class SemCUTModel(BaseModel):
         parser.add_argument('--nce_includes_all_negatives_from_minibatch',
                             type=util.str2bool, nargs='?', const=True, default=False,
                             help='(used for single image translation) If True, include the negatives from the other samples of the minibatch when computing the contrastive loss. Please see models/patchnce.py for more details.')
+        parser.add_argument('--lambda_seg_src', type=float, default=0.0, help='Use segmentation loss in source domain.')
         parser.add_argument('--lambda_seg_con', type=float, default=0.0, help='Enforces weaker segmentation head invariance. Use segmentation consistency loss between src and fake tgt ')
-        parser.add_argument('--lambda_seg_tgt', type=float, default=0.0, help='Use segmentation loss from target domain. (breaks UDA assumption)')
-        parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain. (keeps UDA assumption)')
+        parser.add_argument('--lambda_seg_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
+        parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_mres_seg_con', type=float, default=0.0, help='Enforces strong segmentation head invariance. Use multiple resolution segmentation consistency loss between src and fake tgt (or tgt and tgtidt)')
         parser.add_argument('--ignore_index', type=int, default=5, help='ignore index for segmentation loss')
         parser.add_argument('--netF', type=str, default='mlp_sample', choices=['sample', 'reshape', 'mlp_sample'], help='how to downsample the feature map')
@@ -64,13 +65,20 @@ class SemCUTModel(BaseModel):
 
     def __init__(self, opt):
         BaseModel.__init__(self, opt)
+        self.use_seg_decoder = self.opt.lambda_seg_src > 0.0 or self.opt.lambda_seg_tgt > 0.0 or self.opt.lambda_seg_con > 0.0 or self.opt.lambda_seg_con_tgt > 0.0 or self.opt.lambda_mres_seg_con > 0.0
+        if not self.use_seg_decoder:
+            opt.connect_fun = None
 
         # specify the training losses you want to print out.
         # The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE', 'seg']
+        self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE']
+        if self.use_seg_decoder:
+            self.loss_names += ['seg']
         if opt.gan_mode =='wgangp':
             self.loss_names += ['grad_pen']
         self.visual_names = ['real_A', 'fake_B', 'real_B']
+        
+
         self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
         self.seg_layers = [int(i) for i in self.opt.seg_layers.split(',')]
         self.D_updates_per_G = opt.D_iters
@@ -79,8 +87,17 @@ class SemCUTModel(BaseModel):
             self.loss_names += ['NCE_Y']
             self.visual_names += ['idt_B']
 
+        if self.use_seg_decoder:
+            self.visual_names+=['mask_A']
+            self.visual_names+=['pred_real_mask_A'] # segmentation based on real_A
+            self.visual_names+=['mask_B']
+            self.visual_names+=['pred_real_mask_B'] # segmentation based on real_B
+
+
         if self.isTrain:
-            self.model_names = ['enc', 'decS', 'decM', 'F', 'D']
+            self.model_names = ['enc', 'decS', 'F', 'D']
+            if self.use_seg_decoder:
+                self.model_names += ['decM']
         else:  # during test time, only load G
             self.model_names = ['enc', 'decS']
         # input_nc, output_nc, ngf, net_enc, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], n_levels=2, opt=None
@@ -89,9 +106,10 @@ class SemCUTModel(BaseModel):
         self.netdecS = networks.define_decoder(
             'qwe', opt.output_nc, opt.ngf, opt.net_decS, opt.norm_dec, not opt.no_dropout, opt.init_type, opt.init_gain, 
                                                      opt.no_antialias_up, self.gpu_ids, opt.n_levels, opt.connect_fun, 'style', opt)
-        self.netdecM = networks.define_decoder(
-            'qwe', opt.n_classes, opt.ngf, opt.net_decM, opt.norm_dec, not opt.no_dropout, opt.init_type, opt.init_gain, 
-                                                     opt.no_antialias_up, self.gpu_ids, opt.n_levels, opt.connect_fun, 'mask', opt)
+        if self.use_seg_decoder:
+            self.netdecM = networks.define_decoder(
+                'qwe', opt.n_classes, opt.ngf, opt.net_decM, opt.norm_dec, not opt.no_dropout, opt.init_type, opt.init_gain, 
+                                                        opt.no_antialias_up, self.gpu_ids, opt.n_levels, opt.connect_fun, 'mask', opt)
         
         # define networks (both generator and discriminator)
         #self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.normG, not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up, self.gpu_ids, opt)
@@ -112,12 +130,14 @@ class SemCUTModel(BaseModel):
             self.criterionIdt = torch.nn.L1Loss().to(self.device)
             self.optimizer_enc = torch.optim.Adam(self.netenc.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
             self.optimizer_decS = torch.optim.Adam(self.netdecS.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
-            self.optimizer_decM = torch.optim.Adam(self.netdecM.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
+            if self.use_seg_decoder:
+                self.optimizer_decM = torch.optim.Adam(self.netdecM.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
             
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
             self.optimizers.append(self.optimizer_enc)
             self.optimizers.append(self.optimizer_decS)
-            self.optimizers.append(self.optimizer_decM)
+            if self.use_seg_decoder:
+                self.optimizers.append(self.optimizer_decM)
             self.optimizers.append(self.optimizer_D)
 
     def data_dependent_initialize(self, data):
@@ -146,11 +166,13 @@ class SemCUTModel(BaseModel):
     
     def compute_seg_loss(self, real_mask_A, real_mask_B=None, fake_B_mask=None, idt_B_mask=None):
         seg_loss = 0.
-        #assert (self.mask_A <5)
-        #print(self.mask_A.unique())
-        # supervised segmentation loss
-        sup_seg_loss_src =  self.criterionSeg(real_mask_A, self.mask_A[:,0])
-        seg_loss += sup_seg_loss_src
+        
+        # supervised segmentation loss with source domain labels
+        if self.opt.lambda_seg_src > 0.0:
+            sup_seg_loss_src =  self.criterionSeg(real_mask_A, self.mask_A[:,0])
+            seg_loss += sup_seg_loss_src
+
+        # supervised segmentation loss with target domain labels
         if self.opt.lambda_seg_tgt > 0.0:
             sup_seg_loss_tgt = self.criterionSeg(real_mask_B, self.mask_B[:,0])
             seg_loss += sup_seg_loss_tgt
@@ -167,16 +189,17 @@ class SemCUTModel(BaseModel):
         if self.opt.lambda_seg_con_tgt > 0.0:
             seg_con_loss_tgt = torch.mean((real_mask_B - idt_B_mask)**2)
             seg_loss += (self.opt.lambda_seg_con_tgt * seg_con_loss_tgt)
-            
         return seg_loss
         
     def optimize_seg(self, real_mask_A, real_mask_B=None, fake_B_mask=None, idt_B_mask=None):
-        self.optimizer_decM.zero_grad()
-        self.optimizer_enc.zero_grad()
-        self.loss_seg = self.compute_seg_loss(real_mask_A, real_mask_B, fake_B_mask, idt_B_mask)
-        self.loss_seg.backward(retain_graph=False) # the encoder graph is still needed. (unfortunately, this retains also the graph of the segmentation decoder)
-        self.optimizer_decM.step()
-        self.optimizer_enc.step()
+        if self.use_seg_decoder:
+            self.optimizer_decM.zero_grad()
+            self.optimizer_enc.zero_grad()
+            self.loss_seg = self.compute_seg_loss(real_mask_A, real_mask_B, fake_B_mask, idt_B_mask)
+            self.loss_seg.backward(retain_graph=False) # the encoder graph is still needed. (unfortunately, this retains also the graph of the segmentation decoder)
+            if self.use_seg_decoder: 
+                self.optimizer_decM.step()
+            self.optimizer_enc.step()
     
     def optimize_style(self):
         ## update D
@@ -204,12 +227,18 @@ class SemCUTModel(BaseModel):
         self.forward()
         # update semantic decoder and retain encoder graph
         real_latent, mres_enc = self.encode_real()
-        real_mask, _ = self.decode_seg(real_latent, mres_enc)
-        real_mask_A = real_mask[:self.real_A.size(0)]
-        self.optimize_seg(real_mask_A)      
-        #self.loss_seg = 0.
+        
+        if self.use_seg_decoder:
+            real_mask, _ = self.decode_seg(real_latent, mres_enc)
+            pred_real_mask = torch.argmax(real_mask, dim=1, keepdim=True) # for display
+            self.pred_real_mask_A = pred_real_mask[:self.real_A.size(0)]
+            self.pred_real_mask_B = pred_real_mask[self.real_A.size(0):]
+            real_mask_A = real_mask[:self.real_A.size(0)]
+            real_mask_B = real_mask[self.real_A.size(0):]
+
+        
+        self.optimize_seg(real_mask_A, real_mask_B)
         self.forward_style()
-        #with torch.autograd.set_detect_anomaly(True):
         self.optimize_style()
             
 
@@ -247,17 +276,24 @@ class SemCUTModel(BaseModel):
         real_mask, mres_mask = self.netdecM(real_latent, mres_enc[:-1][::-1], layers=self.seg_layers) 
         return real_mask, mres_mask
     
-    def decode_style(self, real_latent, mres_mask):
+    def decode_style(self, real_latent, mres_mask=None):
         # stop gradients to segmentation network
-        mres_mask_detached = [el.clone().detach() for el in mres_mask]
+        if mres_mask is not None:
+            mres_mask_detached = [el.clone().detach() for el in mres_mask]
+        else:
+            mres_mask_detached = [None for _ in range(len(self.seg_layers))]
         fake = self.netdecS(real_latent, mres_mask_detached)  
         return fake
     
     def forward_style(self):
         real_latent, mres_enc = self.encode_real()
-        with torch.no_grad():
-            _, mres_mask = self.decode_seg(real_latent, mres_enc)
-            #mres_mask = [torch.zeros_like(el) for el in mres_mask]
+        if self.use_seg_decoder:
+            with torch.no_grad():
+                _, mres_mask = self.decode_seg(real_latent, mres_enc)
+                #mres_mask = [torch.zeros_like(el) for el in mres_mask]
+        else:
+            mres_mask = None
+
         self.fake = self.decode_style(real_latent, mres_mask)
         
         self.fake_B = self.fake[:self.real_A.size(0)] # required for the GAN loss
