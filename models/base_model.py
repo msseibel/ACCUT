@@ -85,7 +85,10 @@ class BaseModel(ABC):
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
         pass
-
+    
+    def get_style_paths(self):
+        return self.style_path
+    
     def setup(self, opt):
         """Load and print networks; create schedulers
 
@@ -225,6 +228,21 @@ class BaseModel(ABC):
                 # patch InstanceNorm checkpoints prior to 0.4
                 # for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
                 #    self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
+                
+                # somehow the state dict does not match the model names: 
+                # E.g. "connect_upsample_layers.0.model.conv.weight" -> "connect_upsample_layers.0.model.weight" 
+                #if 'net_dec' in load_filename:
+                #    bug_keys = ["connect_upsample_layers.0.model.conv.weight", "connect_upsample_layers.0.model.conv.bias", "connect_upsample_layers.1.model.conv.weight", "connect_upsample_layers.1.model.conv.bias", "connect_upsample_layers.2.model.conv.weight", "connect_upsample_layers.2.model.conv.bias"]
+                #    for key in list(state_dict.keys()):
+                #        if key in bug_keys:
+                #            # change the key
+                #            new_key = key.replace('.conv', '')
+                #            # set the new key
+                #            state_dict[new_key] = state_dict[key]
+                #            # delete the old key
+                #            state_dict.pop(key)
+                            
+                        
                 net.load_state_dict(state_dict)
 
     def print_networks(self, verbose):
