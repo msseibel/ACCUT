@@ -1,5 +1,5 @@
 import os
-from data.base_dataset import BaseDataset, get_transform, get_transforms_dict
+from data.base_dataset import BaseDataset, get_transform, get_transforms_dict, get_transforms_dict_test
 from data.image_folder import make_dataset
 from PIL import Image
 import random
@@ -105,12 +105,19 @@ class VisotecSpectralisDataset(BaseDataset):
         self.B_size = len(self.B_paths)
         print(self.opt)
         print('crop_pos' in self.opt)
-        
-        self.transform_A = get_transforms_dict(
-            dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=image_keys_src))#get_transform(self.opt)
-        self.transform_B = get_transforms_dict(
-            dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=image_keys_tgt))#get_transform(self.opt)
-
+        if self.opt.isTrain:
+            self.transform_A = get_transforms_dict(
+                dict(dataset=self.dir_A.split('/')[-1].lower(), 
+                     image_keys=image_keys_src))#get_transform(self.opt)
+            self.transform_B = get_transforms_dict(
+                dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=image_keys_tgt))#get_transform(self.opt)
+        else:
+            self.transform_A = get_transforms_dict_test(
+                dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=image_keys_src))
+            self.transform_B = get_transforms_dict_test(
+                dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=image_keys_tgt))
+            
+                
     def __getitem__(self, index):
         if self.opt.isTrain:
             index_A = index
@@ -140,8 +147,8 @@ class VisotecSpectralisDataset(BaseDataset):
         resultsB = {'img': np.array(B_img),
                     'gt_semantic_seg': np.array(B_mask), 
                     'seg_fields': ['gt_semantic_seg'],
-                    'ori_size':np.flip(B_img.size),
-                    }
+                    'ori_size':np.flip(B_img.size)}
+        
         resultsA = self.transform_A(resultsA) 
         resultsB = self.transform_B(resultsB) 
         
@@ -153,15 +160,21 @@ class VisotecSpectralisDataset(BaseDataset):
         mask_B = resultsB['gt_semantic_seg']
         mask_B[mask_B==255] = 5 # remap index ignore to max(classes) + 1
         
-
+            
         name_A = '_'.join(A_path.split('/')[-3:])#os.path.basename(A_path)
         name_B = '_'.join(B_path.split('/')[-3:])#os.path.basename(B_path)
         if self.opt.isTrain:
             name = name_B[:name_B.rfind('.')] + '_' + name_A[:name_A.rfind('.')] + name_A[name_A.rfind('.'):]
         else:
             name = name_A[:name_A.rfind('.')] + name_A[name_A.rfind('.'):]
+            #name_B = name_B.split('../../tmp/')[-1]
+        A_path = A_path.split('../../tmp/')[-1]
         
-        result = {'A': A, 'B': B, 
+        
+        print(name)
+        
+        result = {'A': A, 
+                  'B': B, 
                   'mask_A': mask_A.type(torch.long), 
                   'mask_B': mask_B.type(torch.long),
                   'name': name, 
