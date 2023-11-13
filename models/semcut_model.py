@@ -36,6 +36,7 @@ class SemCUTModel(BaseModel):
         parser.add_argument('--lambda_seg_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_mres_seg_con', type=float, default=0.0, help='Enforces strong segmentation head invariance. Use multiple resolution segmentation consistency loss between src and fake tgt (or tgt and tgtidt)')
+        #parser.add_argument('--connect_fun', type=str, default='cat', help='how to connect the multi resolution features to the decoder(s)')
         parser.add_argument('--ignore_index', type=int, default=5, help='ignore index for segmentation loss')
         parser.add_argument('--netF', type=str, default='mlp_sample', choices=['sample', 'reshape', 'mlp_sample'], help='how to downsample the feature map')
         parser.add_argument('--netF_nc', type=int, default=256)
@@ -74,8 +75,9 @@ class SemCUTModel(BaseModel):
         self.loss_names = ['G_GAN', 'D_real', 'D_fake', 'G', 'NCE']
         if self.use_seg_decoder:
             self.loss_names += ['seg']
-        if opt.gan_mode =='wgangp':
+        if self.isTrain and opt.gan_mode =='wgangp':
             self.loss_names += ['grad_pen']
+        
         self.visual_names = ['real_A', 'fake_B', 'real_B']
         
 
@@ -87,19 +89,19 @@ class SemCUTModel(BaseModel):
             self.loss_names += ['NCE_Y']
             self.visual_names += ['idt_B']
 
-        if self.use_seg_decoder:
+        if self.use_seg_decoder and self.isTrain:
             self.visual_names+=['mask_A']
             self.visual_names+=['pred_real_mask_A'] # segmentation based on real_A
             self.visual_names+=['mask_B']
             self.visual_names+=['pred_real_mask_B'] # segmentation based on real_B
 
-
+        self.model_names = ['enc', 'decS']
+        if self.use_seg_decoder:
+            self.model_names += ['decM']
         if self.isTrain:
-            self.model_names = ['enc', 'decS', 'F', 'D']
-            if self.use_seg_decoder:
-                self.model_names += ['decM']
-        else:  # during test time, only load G
-            self.model_names = ['enc', 'decS']
+            self.model_names.extend(['F', 'D'])
+            
+        
         # input_nc, output_nc, ngf, net_enc, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, no_antialias=False, gpu_ids=[], n_levels=2, opt=None
         self.netenc = networks.define_encoder(opt.input_nc, 'qwe', opt.ngf, opt.net_enc, opt.norm_enc, not opt.no_dropout, opt.init_type, opt.init_gain, 
                                                opt.no_antialias, self.gpu_ids, opt.n_levels, opt)
@@ -253,11 +255,13 @@ class SemCUTModel(BaseModel):
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.mask_A = input['mask_A' if AtoB else 'mask_B'].to(self.device)
         self.mask_B = input['mask_B' if AtoB else 'mask_A'].to(self.device)
-        self.image_paths = input['A_paths' if AtoB else 'B_paths']
-
+        self.image_paths = input['name']#input['A_paths' if AtoB else 'B_paths']
+        self.style_path = input.get('style_name','')
 
     def encode_real(self):
-        real_latent, mres_enc = self.netenc(self.real, layers=self.nce_layers) 
+        real_latent, mres_enc = self.netenc(
+            self.real, 
+            layers=self.nce_layers) 
         # set output attributes
         self.real_mres_enc_A = [el[:self.real_A.size(0)] for el in mres_enc]
         if self.opt.nce_idt:
@@ -307,6 +311,9 @@ class SemCUTModel(BaseModel):
     
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
+        if hasattr(self, 'fake_B'):del self.fake_B
+        if hasattr(self, 'idt_B'):del self.idt_B
+        
         self.real = torch.cat((self.real_A, self.real_B), dim=0) if self.opt.nce_idt and self.opt.isTrain else self.real_A
         self.mask = torch.cat((self.mask_A, self.mask_B), dim=0) if (self.opt.lambda_seg_tgt > 0.0) and self.opt.isTrain else self.mask_A
         
@@ -314,6 +321,18 @@ class SemCUTModel(BaseModel):
             self.flipped_for_equivariance = self.opt.isTrain and (np.random.random() < 0.5)
             if self.flipped_for_equivariance:
                 self.real = torch.flip(self.real, [3])
+        
+        # inference mode
+        if not self.opt.isTrain:
+            real_latent, mres_enc = self.encode_real()
+            if self.use_seg_decoder:
+                real_mask, _ = self.decode_seg(real_latent, mres_enc)
+                pred_real_mask = torch.argmax(real_mask, dim=1, keepdim=True) # for display
+                self.pred_real_mask_A = pred_real_mask[:self.real_A.size(0)]
+                self.pred_real_mask_B = pred_real_mask[self.real_A.size(0):]
+                real_mask_A = real_mask[:self.real_A.size(0)]
+                real_mask_B = real_mask[self.real_A.size(0):]
+            self.forward_style()
         
         # self.real_mask, self.fake_mask
         #if self.opt.lambda_seg_con > 0.0: # segmentation consistency
