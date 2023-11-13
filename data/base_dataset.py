@@ -116,6 +116,18 @@ def get_transforms_dict(params):
     ]
     return transforms.Compose(transform_list)
 
+def get_transforms_dict_test(params):
+    #method=Image.BICUBIC
+    transform_list = []
+    transform_list.append(
+        transforms.Lambda(
+            lambda results: __make_power_2d(
+                results, base=16, keys=params['image_keys'])))
+    transform_list.append(custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99))
+    transform_list.append(custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0))
+    transform_list += [custom_transforms.ImageToTensor(params['image_keys'])]
+    return transforms.Compose(transform_list)
+
 
 def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True):
     transform_list = []
@@ -172,15 +184,36 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
     return transforms.Compose(transform_list)
 
 
+def __make_power_2d(results, base, keys=[]):
+    for k in keys:
+        if k=='img':
+            method=Image.BICUBIC
+        elif k=='gt_semantic_seg':
+            method=Image.NEAREST
+        else:
+            continue
+        results[k] = __make_power_2(results[k], base, method)
+        results['img_shape'] = results[k].shape
+        results['pad_shape'] = results[k].shape  # in case that there is no padding
+    return results
 
 def __make_power_2(img, base, method=Image.BICUBIC):
+    input_np = type(img)==np.ndarray
+    if input_np:
+        img = Image.fromarray(img)
     ow, oh = img.size
     h = int(round(oh / base) * base)
     w = int(round(ow / base) * base)
     if h == oh and w == ow:
-        return img
+        if input_np:
+            return np.array(img)
+        else:
+            return img
+    if input_np:
+        return np.array(img.resize((w, h), method))
+    else:
+        return img.resize((w, h), method)
 
-    return img.resize((w, h), method)
 
 
 def __random_zoom_params(factor=None):
