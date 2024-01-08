@@ -13,11 +13,11 @@ Image.MAX_IMAGE_PIXELS = None  # Disable DecompressionBombError
 ImageFile.LOAD_TRUNCATED_IMAGES = True  # Disable OSError: image file is truncated
 
 
-def parse_directory(directory, startswith):
-    files = {'Spectralis':[], 'Visotec':[]}
-    device_counter = {'Spectralis':0, 'Visotec':0}
+def parse_directory(directory, startswith, domain_keys):
+    files = {domain_keys[0]:[], domain_keys[1]:[]}
+    device_counter = {domain_keys[0]:0, domain_keys[1]:0}
     
-    if directory.split('/')[-1] in ['Spectralis', 'Visotec']:
+    if directory.split('/')[-1] in [domain_keys[0], domain_keys[1]]:
         device = directory.split('/')[-1]
         for sub in os.listdir(directory):
             sub_dir = os.path.join(directory, sub)
@@ -41,22 +41,22 @@ def parse_directory(directory, startswith):
     return files, device_counter
 
 # get recursively all tiff files which start with X under a directory
-def get_tiff_files(directory, startswith, min_samples=None):
+def get_tiff_files(directory, startswith, min_samples=None, domain_keys=['Spectralis', 'Visotec']):
     print('Start loading files...', directory)
     #files = {'Spectralis':[], 'Visotec':[]}
     #device_counter = {'Spectralis':0, 'Visotec':0}
-    files, device_counter = parse_directory(directory, startswith)
+    files, device_counter = parse_directory(directory, startswith, domain_keys)
 
     if min_samples=='balanced':
         rng = np.random.RandomState(0)
         common_min = min(device_counter.values())
         print('common_min', common_min)
-        files['Spectralis'] = rng.choice(files['Spectralis'], size=common_min, replace=False)
-        files['Visotec'] = rng.choice(files['Visotec'], size=common_min, replace=False)
-        assert len(files['Spectralis']) == len(files['Visotec'])
+        files[domain_keys[0]] = rng.choice(files[domain_keys[0]], size=common_min, replace=False)
+        files[domain_keys[1]] = rng.choice(files[domain_keys[1]], size=common_min, replace=False)
+        assert len(files[domain_keys[0]]) == len(files[domain_keys[1]])
     elif type(min_samples)==int:
-        assert len(files['Spectralis']) >= min_samples
-        assert len(files['Visotec']) >= min_samples
+        assert len(files[domain_keys[0]]) >= min_samples
+        assert len(files[domain_keys[1]]) >= min_samples
     return files
 
 import torch
@@ -88,9 +88,13 @@ class VisotecSpectralisDataset(BaseDataset):
             image_keys_tgt.append('gt_semantic_seg')
         else:
             startswith_src = 'X'
-        
-        filesA = get_tiff_files(self.dir_A,startswith_src, None)
-        filesB = get_tiff_files(self.dir_B,startswith_tgt, None)
+        if self.dir_A.split('/')[-1].lower() in ['mrispir', 'ct']:
+            domain_keys = ['MRISPIR','CT']
+        elif self.dir_A.split('/')[-1].lower() in ['spectralis', 'visotec']:
+            domain_keys = ['Spectralis', 'Visotec']
+            
+        filesA = get_tiff_files(self.dir_A, startswith_src, None, domain_keys=domain_keys)
+        filesB = get_tiff_files(self.dir_B, startswith_tgt, None, domain_keys=domain_keys)
         
         self.A_paths = np.concatenate(list(filesA.values()))#.copy()#sorted(make_dataset(self.dir_A, opt.max_dataset_size))
         self.B_paths = np.concatenate(list(filesB.values()))#.copy()#sorted(get_tiff_files(self.dir_B,'X'))#sorted(make_dataset(self.dir_B, opt.max_dataset_size))
@@ -116,7 +120,7 @@ class VisotecSpectralisDataset(BaseDataset):
                 dict(dataset=self.dir_A.split('/')[-1].lower(), image_keys=image_keys_src))
             self.transform_B = get_transforms_dict_test(
                 dict(dataset=self.dir_B.split('/')[-1].lower(), image_keys=image_keys_tgt))
-            
+        print('Created dataset')
                 
     def __getitem__(self, index):
         if self.opt.isTrain:
@@ -151,14 +155,19 @@ class VisotecSpectralisDataset(BaseDataset):
         
         resultsA = self.transform_A(resultsA) 
         resultsB = self.transform_B(resultsB) 
-        
+        if self.dir_A.split('/')[-1].lower() in ['mrispir', 'ct']:
+            IGNORE_INDEX = 0
+        else:
+            IGNORE_INDEX = 5
         A = resultsA['img']
         mask_A = resultsA['gt_semantic_seg']
-        mask_A[mask_A==255] = 5 # remap index ignore to max(classes) + 1
+        mask_A[mask_A==255] = IGNORE_INDEX#self.opt.ignore_index # remap index ignore to max(classes) + 1
+
+        
         B = resultsB['img']
         #mask_B = torch.full((1,), float('nan'))
         mask_B = resultsB['gt_semantic_seg']
-        mask_B[mask_B==255] = 5 # remap index ignore to max(classes) + 1
+        mask_B[mask_B==255] = IGNORE_INDEX#self.opt.ignore_index # remap index ignore to max(classes) + 1
         
             
         name_A = '_'.join(A_path.split('/')[-3:])#os.path.basename(A_path)
@@ -170,9 +179,8 @@ class VisotecSpectralisDataset(BaseDataset):
             #name_B = name_B.split('../../tmp/')[-1]
         A_path = A_path.split('../../tmp/')[-1]
         
-        
-        print(name)
-        
+        #print(name)
+
         result = {'A': A, 
                   'B': B, 
                   'mask_A': mask_A.type(torch.long), 
