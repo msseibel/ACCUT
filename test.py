@@ -37,6 +37,10 @@ from PIL import Image
 import numpy as np
 from pathlib import Path
 import csv
+import torch
+
+tmp_dir = Path("../../tmp")
+
 
 def append_row_to_csv(row, csv_file_path):    
     with open(csv_file_path, 'a') as csvfile:
@@ -68,7 +72,6 @@ def info_from_img_name(img_name):
     return domain, sub_id, eye, slice_idx
     
 def writeX_to_tiff(X_slice, domain, sub_id, eye, slice_idx, output_dir):
-    tmp_dir = Path("../../tmp")
     os.makedirs(tmp_dir / output_dir / "tiff" / f'{domain}' / f'{sub_id}', exist_ok=True)
     #print('Save to', tmp_dir / output_dir / "tiff" / f'{domain}' / f'{sub_id}' / f"X-{eye}-{slice_idx}.tiff")
     if type(X_slice) == np.ndarray:
@@ -85,8 +88,27 @@ def writeX_to_tiff(X_slice, domain, sub_id, eye, slice_idx, output_dir):
     
     X_slice.save(tmp_dir / output_dir / "tiff" / f'{domain}' / f'{sub_id}' / f"X-{eye}-{slice_idx}.tiff")
 
+
+def writeY_to_numpy(Y_slice, domain, sub_id, eye, slice_idx, output_dir, src_tgt):
+    os.makedirs(tmp_dir / output_dir / "npy" / f'{domain}' / f'{sub_id}', exist_ok=True)
+    if type(Y_slice) == torch.Tensor:
+        Y_slice = Y_slice.detach().cpu().numpy()
+    elif type(Y_slice) == Image.Image:
+        Y_slice = np.array(Y_slice)
+    elif type(Y_slice) != np.ndarray:
+        assert type(Y_slice) == np.ndarray, f"Y_slice is not a numpy array but {type(Y_slice)}"
+        
+    if domain not in ['RETOUCH-Cirrus2Topcon', 
+                      'RETOUCH-Cirrus2Spectralis',
+                      'RETOUCH-Topcon2Cirrus', 
+                      'RETOUCH-Topcon2Spectralis', 
+                      'RETOUCH-Spectralis2Cirrus', 
+                      'RETOUCH-Spectralis2Topcon', 
+                      'Visotec', 'Spectralis']:
+        raise ValueError(f'Unknown domain {domain}')
+    np.save(tmp_dir / output_dir / "npy" / f'{domain}' / f'{sub_id}' / f"ACCUTY-{eye}-{slice_idx}-{src_tgt}.npy", Y_slice)
+
 def normalize_volumes(output_dir, domain):
-    tmp_dir = Path("../../tmp")
     dataset_dir = tmp_dir / output_dir / "tiff" / f'{domain}'
     for sub_id in os.listdir(dataset_dir):
         for eye in ['OD', 'OS', 'XX']:
@@ -109,11 +131,11 @@ def normalize_volumes(output_dir, domain):
             for idx in range(len(slices)):
                 writeX_to_tiff(slices[idx], domain, sub_id, eye, slice_idxs[idx], output_dir)
 
-def resize(X, ori_size_wh):
+def resize(X, ori_size_wh, method=Image.BICUBIC):
     X_slice = Image.fromarray(X)
     # resize back to original size
     if np.any(X_slice.size!=ori_size_wh):
-        X_slice = X_slice.resize(ori_size_wh, Image.BICUBIC)
+        X_slice = X_slice.resize(ori_size_wh, method)
     return X_slice
 
 if __name__ == '__main__':
@@ -168,8 +190,18 @@ if __name__ == '__main__':
         #save_images(webpage, visuals, img_path, width=opt.display_winsize)
         domain, sub_id, eye, slice_idx = info_from_img_name(img_path[0])
         X = model.fake_B[0,0].detach().cpu().numpy()
+        
         ori_size_wh = tuple(np.concatenate(data['ori_size']))
         X_slice = resize(X, ori_size_wh)
+        
         writeX_to_tiff(X_slice, domain, sub_id, eye, slice_idx, output_dir)
+        if opt.save_seg:
+            Ysrc = model.pred_real_mask_A
+            Ysrc = Ysrc[0,0].detach().cpu().numpy().astype(np.uint8)
+            Ysrc = resize(Ysrc, ori_size_wh, method=Image.NEAREST)
+            #Ytgt = model.pred_real_mask_B
+            writeY_to_numpy(Ysrc, domain, sub_id, eye, slice_idx, output_dir, 'src')
+            #writeY_to_numpy(Ytgt, domain, sub_id, eye, slice_idx, output_dir, 'tgt')
+            
     normalize_volumes(output_dir, domain)
     #webpage.save()  # save the HTML
