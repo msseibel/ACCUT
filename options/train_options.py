@@ -27,7 +27,7 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--epoch_count', type=int, default=1, help='the starting epoch count, we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>, ...')
         parser.add_argument('--phase', type=str, default='train', help='train, val, test, etc')
         parser.add_argument('--pretrained_name', type=str, default=None, help='resume training from another checkpoint')
-
+        parser.add_argument('--ignore_index', type=int, default=5, help='ignore index for segmentation loss')
         # training parameters
         parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs with the initial learning rate')
         parser.add_argument('--n_epochs_decay', type=int, default=200, help='number of epochs to linearly decay learning rate to zero')
