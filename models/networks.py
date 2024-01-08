@@ -1741,7 +1741,7 @@ class ConnectResnetDecoder(nn.Module):
     """
 
     def __init__(
-        self, input_nc, output_nc, ngf=64, n_upsampling=2, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, 
+        self, input_nc, output_nc, ngf, n_upsampling=2, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=2, 
         padding_type='reflect', no_antialias_up=False, output_head='style', connect_fun='cat', opt=None):
         """Construct a Resnet-based decoder
 
@@ -1779,6 +1779,9 @@ class ConnectResnetDecoder(nn.Module):
             
             mult = 2 ** (n_upsampling - i)
             up_nc = int(ngf * mult//2)
+            if connect_fun == None:
+                up_nc *= 2
+            
             conv_upsample_layers.append(
                 UpsampleBlock(prev_nc, up_nc, no_antialias=no_antialias_up, use_bias=use_bias, norm_layer=norm_layer)
             )
@@ -1794,11 +1797,11 @@ class ConnectResnetDecoder(nn.Module):
         if output_head == 'style':
             self.output_head = nn.Sequential(
                 nn.ReflectionPad2d(3),
-                nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0),
+                nn.Conv2d(prev_nc, output_nc, kernel_size=7, padding=0),
                 nn.Tanh()
                 )
         elif output_head == 'mask':
-            self.output_head = nn.Conv2d(ngf, output_nc, kernel_size=1, padding=0)
+            self.output_head = nn.Conv2d(prev_nc, output_nc, kernel_size=1, padding=0)
         else:
             raise NotImplementedError
 
