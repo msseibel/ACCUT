@@ -184,7 +184,7 @@ class UnbiasedPatchNCELoss(nn.Module):
                 break
         return is_single_class
             
-    def forward(self, features_src, features_tgt, classes=None, num_pairs_should=None, weights=None):
+    def forward(self, features_src, features_tgt, classes=None, num_pairs_should=None, weights=None, ignore_index=255):
         if weights is not None:
             assert classes is None
             assert num_pairs_should is None
@@ -205,7 +205,7 @@ class UnbiasedPatchNCELoss(nn.Module):
         #num_patches = features_src.shape[0]
         dim = features_src.shape[1] # num_features
     
-        samples_ignore = (classes == 255).squeeze()
+        samples_ignore = (classes == ignore_index).squeeze()
         # if more than 90% of samples are ignored, use vanilla nce
         num_samples_ignore = samples_ignore.sum()
         if  num_samples_ignore>= int(len(samples_ignore)*0.9):
