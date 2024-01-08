@@ -33,4 +33,5 @@ subprocess.run(['python', 'test.py',
 "--use_seg_tgt", "True",
 "--epoch", f"{epoch}",
 "--lambda_seg_src", lambda_seg_src,
+"--save_seg", "True"
 ])
