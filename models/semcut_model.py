@@ -37,7 +37,6 @@ class SemCUTModel(BaseModel):
         parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_mres_seg_con', type=float, default=0.0, help='Enforces strong segmentation head invariance. Use multiple resolution segmentation consistency loss between src and fake tgt (or tgt and tgtidt)')
         #parser.add_argument('--connect_fun', type=str, default='cat', help='how to connect the multi resolution features to the decoder(s)')
-        parser.add_argument('--ignore_index', type=int, default=5, help='ignore index for segmentation loss')
         parser.add_argument('--netF', type=str, default='mlp_sample', choices=['sample', 'reshape', 'mlp_sample'], help='how to downsample the feature map')
         parser.add_argument('--netF_nc', type=int, default=256)
         parser.add_argument('--nce_T', type=float, default=0.07, help='temperature for NCE loss')
@@ -237,15 +236,16 @@ class SemCUTModel(BaseModel):
             self.pred_real_mask_B = pred_real_mask[self.real_A.size(0):]
             real_mask_A = real_mask[:self.real_A.size(0)]
             real_mask_B = real_mask[self.real_A.size(0):]
-
-        
-        self.optimize_seg(real_mask_A, real_mask_B)
+            self.optimize_seg(real_mask_A, real_mask_B)
+            
         self.forward_style()
         self.optimize_style()
             
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
+
+        This function is called in train.py and test.py.
         Parameters:
             input (dict): include the data itself and its metadata information.
         The option 'direction' can be used to swap domain A and domain B.
