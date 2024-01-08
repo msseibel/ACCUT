@@ -103,8 +103,32 @@ def get_transforms_dict(params):
         resize_params = dict(img_scale=(484, 524),ratio_range=(0.99, 1.01))
     elif params['dataset']=='spectralis':
         resize_params = dict(img_scale=(900, 1000), ratio_range=(.99, 1.01))
-
-    transform_list = [
+    elif params['dataset'].lower()=='ct':
+        crop_size = (144, 192)
+        resize_params = dict(img_scale=(192, 192), ratio_range=(.9, 1.1))
+        #aug = [custom_transforms.RandomFlip(prob=1.0, direction='vertical')]
+    elif params['dataset'].lower()=='mrispir':
+        crop_size = (144, 192)
+        resize_params = dict(img_scale=(192, 210), ratio_range=(.9, 1.1))
+        #aug = []
+    else:
+        ds = params['dataset']
+        print(f"Dataset {ds} not supported")
+        raise ValueError(f"Dataset {ds} not supported")
+    if params['dataset'].lower() in ['mrispir', 'ct']:
+        transform_list = [
+            custom_transforms.RandomFlip(prob=(params['dataset'].lower()=='mrispir')*1.0, direction='vertical'),
+            #custom_transforms.Resize(keep_ratio=True, **resize_params),
+            transforms.Lambda(lambda results: __resized(results, size=(144,192), keys=params['image_keys'])),
+            custom_transforms.RandomRotate(prob=0.5, degree=(-10, 10)),
+            #custom_transforms.RandomCrop(crop_size=crop_size),
+            custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99),
+            custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0),
+            #custom_transforms.Pad(size=crop_size, pad_val=0, seg_pad_val=255),
+            custom_transforms.ImageToTensor(params['image_keys']),
+        ]
+    elif params['dataset'].lower() in ['visotec', 'spectralis']:
+            transform_list = [
         custom_transforms.Resize(keep_ratio=True, **resize_params),
         custom_transforms.RandomRotate(prob=0.5, degree=(-10, 10)),
         custom_transforms.RandomFlip(prob=0.5, direction='horizontal'),
@@ -118,14 +142,13 @@ def get_transforms_dict(params):
 
 def get_transforms_dict_test(params):
     #method=Image.BICUBIC
-    transform_list = []
-    transform_list.append(
-        transforms.Lambda(
-            lambda results: __make_power_2d(
-                results, base=16, keys=params['image_keys'])))
-    transform_list.append(custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99))
-    transform_list.append(custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0))
-    transform_list += [custom_transforms.ImageToTensor(params['image_keys'])]
+    transform_list = [
+        custom_transforms.RandomFlip(prob=(params['dataset'].lower()=='mrispir')*1.0, direction='vertical'),
+        transforms.Lambda(lambda results: __make_power_2d(results, base=16, keys=params['image_keys'])),
+        custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99),
+        custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0),
+        custom_transforms.ImageToTensor(params['image_keys'])
+    ]
     return transforms.Compose(transform_list)
 
 
@@ -196,6 +219,37 @@ def __make_power_2d(results, base, keys=[]):
         results['img_shape'] = results[k].shape
         results['pad_shape'] = results[k].shape  # in case that there is no padding
     return results
+
+def __resized(results, size, keys=[]):
+    for k in keys:
+        if k=='img':
+            method=Image.BICUBIC
+        elif k=='gt_semantic_seg':
+            method=Image.NEAREST
+        else:
+            continue
+        results[k] = __resize(results[k], size, method)
+        results['img_shape'] = results[k].shape
+        results['pad_shape'] = results[k].shape  # in case that there is no padding
+    return results
+
+def __resize(img, size, method=Image.BICUBIC):
+    """h, w = size"""
+    input_np = type(img)==np.ndarray
+    if input_np:
+        img = Image.fromarray(img)
+    ow, oh = img.size
+    h, w = size
+    if h == oh and w == ow:
+        if input_np:
+            return np.array(img)
+        else:
+            return img
+    if input_np:
+        return np.array(img.resize((w, h), method))
+    else:
+        return img.resize((w, h), method)
+
 
 def __make_power_2(img, base, method=Image.BICUBIC):
     input_np = type(img)==np.ndarray
