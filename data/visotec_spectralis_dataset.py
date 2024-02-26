@@ -87,10 +87,10 @@ class VisotecSpectralisDataset(BaseDataset):
             startswith_tgt = 'Y'
             image_keys_tgt.append('gt_semantic_seg')
         else:
-            startswith_src = 'X'
+            startswith_tgt = 'X'
         if self.dir_A.split('/')[-1].lower() in ['mrispir', 'ct']:
             domain_keys = ['MRISPIR','CT']
-        elif self.dir_A.split('/')[-1].lower() in ['spectralis', 'visotec']:
+        if self.dir_A.split('/')[-1].lower() in ['spectralis', 'visotec']:
             domain_keys = ['Spectralis', 'Visotec']
             
         filesA = get_tiff_files(self.dir_A, startswith_src, None, domain_keys=domain_keys)
