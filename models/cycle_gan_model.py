@@ -114,7 +114,8 @@ class CycleGANModel(BaseModel):
         AtoB = self.opt.direction == 'AtoB'
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
-        self.image_paths = input['A_paths' if AtoB else 'B_paths']
+        self.image_paths = input['name']#input['A_paths' if AtoB else 'B_paths']
+        self.style_path = input.get('style_name','')
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
@@ -142,7 +143,7 @@ class CycleGANModel(BaseModel):
         loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss and calculate gradients
         loss_D = (loss_D_real + loss_D_fake) * 0.5
-        if self.opt.amp:
+        if hasattr(self.opt, 'amp') and self.opt.amp:
             with amp.scale_loss(loss_D, self.optimizer_D) as scaled_loss:
                 scaled_loss.backward()
         else:
@@ -186,13 +187,13 @@ class CycleGANModel(BaseModel):
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
-        if self.opt.amp:
+        if hasattr(self.opt, 'amp') and self.opt.amp:
             with amp.scale_loss(self.loss_G, self.optimizer_G) as scaled_loss:
                 scaled_loss.backward()
         else:
             self.loss_G.backward()
 
-    def data_dependent_initialize(self):
+    def data_dependent_initialize(self, data):
         return
 
     def generate_visuals_for_evaluation(self, data, mode):
