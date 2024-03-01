@@ -143,7 +143,6 @@ def get_transforms_dict(params):
 def get_transforms_dict_test(params):
     #method=Image.BICUBIC
     transform_list = [
-        custom_transforms.RandomFlip(prob=(params['dataset'].lower()=='mrispir')*1.0, direction='vertical'),
         transforms.Lambda(lambda results: __make_power_2d(results, base=16, keys=params['image_keys'])),
         custom_transforms.ClipPercentile(lower_perc=1, upper_perc=99),
         custom_transforms.RescaleMinMax(min_val=-1.0, max_val=1.0),

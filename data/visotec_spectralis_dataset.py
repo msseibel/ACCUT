@@ -88,8 +88,6 @@ class VisotecSpectralisDataset(BaseDataset):
             image_keys_tgt.append('gt_semantic_seg')
         else:
             startswith_tgt = 'X'
-        if self.dir_A.split('/')[-1].lower() in ['mrispir', 'ct']:
-            domain_keys = ['MRISPIR','CT']
         if self.dir_A.split('/')[-1].lower() in ['spectralis', 'visotec']:
             domain_keys = ['Spectralis', 'Visotec']
             
