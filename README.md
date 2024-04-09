@@ -1,6 +1,6 @@
 # Anatomically Conditioned Contrastive Unpaired Translation (ACCUT)
 
-ACCUT is an extension of the "Contrastive Learning for Unpaired Image-to-Image Translation" by Park et al. It is an approach to retain semantic information when during style transfer. This method was tested only on optical coherence tomography data.
+ACCUT is an extension of the "Contrastive Learning for Unpaired Image-to-Image Translation" by Park et al. It is an approach to retain semantic information during style transfer. This method was tested only on optical coherence tomography data.
 
 ### Network architecture
 The network architecture is the same as in the original CUT paper except that we added a segmentation decoder which passes features to the style decoder and thereby stresses semantic information. Standard crossentropy loss is used to train the segmentation pathway of the network. <br /> To separate shape from appearance, we update only encoder and style decoder when optimizing $`\mathcal{L}_{PatchNCE}`$ and $`\mathcal{L}_{GAN}`$. 
