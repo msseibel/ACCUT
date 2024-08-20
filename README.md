@@ -1,31 +1,26 @@
-
-
 # Anatomically Conditioned Contrastive Unpaired Translation (ACCUT)
 
-
-We provide our extension "Anatomically Conditioned Contrastive Unpaired Translation" to the "Contrastive Learning for Unpaired Image-to-Image Translation" by Park et al. It adds a segmentation decoder which passes features to the style decoder and thereby stresses semantic information. This work will be presented at ISBI 2024.
-
-
-
+ACCUT is an extension of the "Contrastive Learning for Unpaired Image-to-Image Translation" by Park et al. It is an approach to retain semantic information during style transfer. This method was tested only on optical coherence tomography data.
 
 ### Network architecture
-![Example Image](./imgs/all_networks.png)
+The network architecture is the same as in the original CUT paper except that we added a segmentation decoder which passes features to the style decoder and thereby stresses semantic information. Standard crossentropy loss is used to train the segmentation pathway of the network. <br /> To separate shape from appearance, we update only encoder and style decoder when optimizing $`\mathcal{L}_{PatchNCE}`$ and $`\mathcal{L}_{GAN}`$. 
 
-## Example Results
-
-
-
-
-
-
-#### Preprocessing of input images
-
+<p align="center">
+<img src="./imgs/all_networks.png" alt="drawing" width="400"/>
+</p>
 
 
 ### Citation
-If you use this code for your research, please cite our [paper](https://arxiv.org/pdf/2007.15651).
+If you use this code for your research, please cite our [paper](https://arxiv.org/abs/2404.05409).
 ```
-
+@misc{seibel2024anatomical,
+      title={Anatomical Conditioning for Contrastive Unpaired Image-to-Image Translation of Optical Coherence Tomography Images}, 
+      author={Marc S. Seibel and Hristina Uzunova and Timo Kepp and Heinz Handels},
+      year={2024},
+      eprint={2404.05409},
+      archivePrefix={arXiv},
+      primaryClass={eess.IV}
+}
 ```
 
 If you use the original [CUT](https://arxiv.org/pdf/2007.15651), [pix2pix](https://phillipi.github.io/pix2pix/) and [CycleGAN](https://junyanz.github.io/CycleGAN/) model included in this repo, please cite the following papers
