@@ -186,6 +186,7 @@ class VisotecSpectralisDataset(BaseDataset):
                   'name': name, 
                   'style_name':name_B, 
                   'ori_size':A_img.size, 
+                  'ori_size_tgt': B_img.size,
                   'A_paths': A_path, 
                   'B_paths': B_path}
         return result

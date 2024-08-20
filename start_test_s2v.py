@@ -6,7 +6,7 @@ version =14.1
 #output_dir = 'bvm_baseline'
 #output_dir = 'bvm_doubleseg'
 #output_dir = 'bvm_targetseg'
-output_dir = 'bvm_sourceseg'
+output_dir = 'bvm_doubleseg'
 if output_dir == 'bvm_baseline':
     lambda_seg_src = '0.0'
 else:

@@ -329,7 +329,10 @@ class SemCUTModel(BaseModel):
                 real_mask, _ = self.decode_seg(real_latent, mres_enc)
                 pred_real_mask = torch.argmax(real_mask, dim=1, keepdim=True) # for display
                 self.pred_real_mask_A = pred_real_mask[:self.real_A.size(0)]
-                self.pred_real_mask_B = pred_real_mask[self.real_A.size(0):]
+                
+                #fake_mask, _ = self.decode_seg(fake_latent, mres_enc_fake)
+                #pred_fake_mask = torch.argmax(fake_mask, dim=1, keepdim=True) # for display
+                #self.pred_fake_mask_B = pred_real_mask[self.real_A.size(0):]
                 real_mask_A = real_mask[:self.real_A.size(0)]
                 real_mask_B = real_mask[self.real_A.size(0):]
             self.forward_style()
