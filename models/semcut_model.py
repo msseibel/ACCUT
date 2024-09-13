@@ -31,7 +31,7 @@ class SemCUTModel(BaseModel):
         parser.add_argument('--nce_includes_all_negatives_from_minibatch',
                             type=util.str2bool, nargs='?', const=True, default=False,
                             help='(used for single image translation) If True, include the negatives from the other samples of the minibatch when computing the contrastive loss. Please see models/patchnce.py for more details.')
-        parser.add_argument('--lambda_seg_src', type=float, default=0.0, help='Use segmentation loss in source domain.')
+        parser.add_argument('--lambda_seg_src', type=float, default=1.0, help='Use segmentation loss in source domain.')
         parser.add_argument('--lambda_seg_con', type=float, default=0.0, help='Enforces weaker segmentation head invariance. Use segmentation consistency loss between src and fake tgt ')
         parser.add_argument('--lambda_seg_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')

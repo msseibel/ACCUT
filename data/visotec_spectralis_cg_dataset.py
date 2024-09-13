@@ -76,14 +76,14 @@ class VisotecSpectralisCGDataset(BaseDataset):
         # Some images don't have an associated segmentation. 
         # startswith='Y' ensures that we only load images with a segmentation
         image_keys_src = ['img']
-        if opt.use_seg_src:
+        if opt.load_src_seg:
             startswith_src = 'Y'
             image_keys_src.append('gt_semantic_seg')
         else:
             startswith_src = 'X'
         
         image_keys_tgt = ['img']
-        if opt.use_seg_tgt:
+        if opt.load_tgt_seg:
             startswith_tgt = 'Y'
             image_keys_tgt.append('gt_semantic_seg')
         else:
