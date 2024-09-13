@@ -14,6 +14,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True  # Disable OSError: image file is truncat
 
 
 def parse_directory(directory, startswith, domain_keys):
+    """
+    directory: str, path to the directory
+    startswith: str, prefix of the files
+    domain_keys: list, keys of the domains
+    """
     files = {domain_keys[0]:[], domain_keys[1]:[]}
     device_counter = {domain_keys[0]:0, domain_keys[1]:0}
     
@@ -42,6 +47,12 @@ def parse_directory(directory, startswith, domain_keys):
 
 # get recursively all tiff files which start with X under a directory
 def get_tiff_files(directory, startswith, min_samples=None, domain_keys=['Spectralis', 'Visotec']):
+    """
+    directory: str, path to the directory
+    startswith: str, prefix of the files
+    min_samples: int or None, minimum number of samples per domain. If None, take all samples.
+    domain_keys: list, keys of the domains
+    """
     print('Start loading files...', directory)
     #files = {'Spectralis':[], 'Visotec':[]}
     #device_counter = {'Spectralis':0, 'Visotec':0}
@@ -51,8 +62,8 @@ def get_tiff_files(directory, startswith, min_samples=None, domain_keys=['Spectr
         rng = np.random.RandomState(0)
         common_min = min(device_counter.values())
         print('common_min', common_min)
-        files[domain_keys[0]] = rng.choice(files[domain_keys[0]], size=common_min, replace=False)
-        files[domain_keys[1]] = rng.choice(files[domain_keys[1]], size=common_min, replace=False)
+        for key in domain_keys:
+            files[key] = rng.choice(files[key], size=common_min, replace=False)
         assert len(files[domain_keys[0]]) == len(files[domain_keys[1]])
     elif type(min_samples)==int:
         assert len(files[domain_keys[0]]) >= min_samples
@@ -76,14 +87,14 @@ class VisotecSpectralisDataset(BaseDataset):
         # Some images don't have an associated segmentation. 
         # startswith='Y' ensures that we only load images with a segmentation
         image_keys_src = ['img']
-        if opt.use_seg_src:
+        if opt.load_src_seg:
             startswith_src = 'Y'
             image_keys_src.append('gt_semantic_seg')
         else:
             startswith_src = 'X'
         
         image_keys_tgt = ['img']
-        if opt.use_seg_tgt:
+        if opt.load_tgt_seg:
             startswith_tgt = 'Y'
             image_keys_tgt.append('gt_semantic_seg')
         else:
