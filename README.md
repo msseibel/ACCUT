@@ -10,17 +10,41 @@ The network architecture is the same as in the original CUT paper except that we
 </p>
 
 
+### Dataset preparation
+The dataset could be organized as follows:
+```
+dataset
+├── DomainA
+│   ├── subject1
+│   │   ├── X-{eye}-{idx:03d}.tiff
+│   │   ├── Y-{eye}-{idx:03d}.tiff
+│   ├── subject2
+...
+├── DomainB
+│   ├── subject1
+│   │   ├── X-{eye}-{idx:03d}.tiff
+│   │   ├── Y-{eye}-{idx:03d}.tiff (optional)
+...
+```
+
+### Training:
+To train the model using the source segmentation masks, you need to run the following command:
+```bash
+python train.py  --content_path PATH_TO_CONTENT --style_path PATH_TO_STYLE --name OUTDIR_EXPERIMENT_NAME --dataset_mode visotec_spectralis --model semcut --CUT_mode CUT --load_src_seg True
+```
+
 ### Citation
 If you use this code for your research, please cite our [paper](https://arxiv.org/abs/2404.05409).
 ```
-@misc{seibel2024anatomical,
-      title={Anatomical Conditioning for Contrastive Unpaired Image-to-Image Translation of Optical Coherence Tomography Images}, 
-      author={Marc S. Seibel and Hristina Uzunova and Timo Kepp and Heinz Handels},
-      year={2024},
-      eprint={2404.05409},
-      archivePrefix={arXiv},
-      primaryClass={eess.IV}
-}
+@INPROCEEDINGS{10635513,
+  author={Seibel, Marc S. and Uzunova, Hristina and Kepp, Timo and Handels, Heinz},
+  booktitle={2024 IEEE International Symposium on Biomedical Imaging (ISBI)}, 
+  title={Anatomical Conditioning for Contrastive Unpaired Image-to-Image Translation of Optical Coherence Tomography Images}, 
+  year={2024},
+  volume={},
+  number={},
+  pages={1-5},
+  doi={10.1109/ISBI56570.2024.10635513}}
 ```
 
 If you use the original [CUT](https://arxiv.org/pdf/2007.15651), [pix2pix](https://phillipi.github.io/pix2pix/) and [CycleGAN](https://junyanz.github.io/CycleGAN/) model included in this repo, please cite the following papers

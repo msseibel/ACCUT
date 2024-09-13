@@ -6,7 +6,7 @@ version =14.1
 #output_dir = 'bvm_baseline'
 #output_dir = 'bvm_doubleseg'
 #output_dir = 'bvm_targetseg'
-output_dir = 'bvm_sourceseg'
+output_dir = 'bvm_doubleseg'
 if output_dir == 'bvm_baseline':
     lambda_seg_src = '0.0'
 else:
@@ -29,8 +29,8 @@ subprocess.run(['python', 'test.py',
 "--output_dir", f'{output_dir}',
 "--input_nc", "1",
 "--output_nc", "1",
-"--use_seg_src", "True",
-"--use_seg_tgt", "True",
+"--load_src_seg", "True",
+"--load_tgt_seg", "True",
 "--epoch", f"{epoch}",
 "--lambda_seg_src", lambda_seg_src,
 "--save_seg", "True"

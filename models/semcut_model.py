@@ -31,7 +31,7 @@ class SemCUTModel(BaseModel):
         parser.add_argument('--nce_includes_all_negatives_from_minibatch',
                             type=util.str2bool, nargs='?', const=True, default=False,
                             help='(used for single image translation) If True, include the negatives from the other samples of the minibatch when computing the contrastive loss. Please see models/patchnce.py for more details.')
-        parser.add_argument('--lambda_seg_src', type=float, default=0.0, help='Use segmentation loss in source domain.')
+        parser.add_argument('--lambda_seg_src', type=float, default=1.0, help='Use segmentation loss in source domain.')
         parser.add_argument('--lambda_seg_con', type=float, default=0.0, help='Enforces weaker segmentation head invariance. Use segmentation consistency loss between src and fake tgt ')
         parser.add_argument('--lambda_seg_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
         parser.add_argument('--lambda_seg_con_tgt', type=float, default=0.0, help='Use segmentation loss from target domain.')
@@ -329,7 +329,10 @@ class SemCUTModel(BaseModel):
                 real_mask, _ = self.decode_seg(real_latent, mres_enc)
                 pred_real_mask = torch.argmax(real_mask, dim=1, keepdim=True) # for display
                 self.pred_real_mask_A = pred_real_mask[:self.real_A.size(0)]
-                self.pred_real_mask_B = pred_real_mask[self.real_A.size(0):]
+                
+                #fake_mask, _ = self.decode_seg(fake_latent, mres_enc_fake)
+                #pred_fake_mask = torch.argmax(fake_mask, dim=1, keepdim=True) # for display
+                #self.pred_fake_mask_B = pred_real_mask[self.real_A.size(0):]
                 real_mask_A = real_mask[:self.real_A.size(0)]
                 real_mask_B = real_mask[self.real_A.size(0):]
             self.forward_style()

@@ -110,7 +110,9 @@ def writeY_to_numpy(Y_slice, domain, sub_id, eye, slice_idx, output_dir, src_tgt
 
 def normalize_volumes(output_dir, domain):
     dataset_dir = tmp_dir / output_dir / "tiff" / f'{domain}'
-    for sub_id in os.listdir(dataset_dir):
+    if SUBJECTS is None:
+        SUBJECTS = os.listdir(dataset_dir)
+    for sub_id in SUBJECTS:#os.listdir(dataset_dir):
         for eye in ['OD', 'OS', 'XX']:
             # list all files which contain the eye and the sub_id
             files = [f for f in os.listdir(dataset_dir / sub_id) if eye in f]
@@ -139,6 +141,7 @@ def resize(X, ori_size_wh, method=Image.BICUBIC):
     return X_slice
 
 if __name__ == '__main__':
+    SUBJECTS = ['081']
     opt = TestOptions().parse()  # get test options
     # hard-code some parameters for test
     opt.num_threads = 0   # test code only supports num_threads = 1
@@ -163,6 +166,10 @@ if __name__ == '__main__':
         writer.writerow(['src_img_path', 'style_img_path', 'ablation_img_path'])
 
     for i, data in enumerate(dataset):
+        print(data['A_paths'])
+        print(data['name'])
+        if not '_81_' in data['name'][0]:
+            continue
         if i == 0:
             model.data_dependent_initialize(data)
             model.setup(opt)               # regular setup: load and print networks; create schedulers
@@ -192,16 +199,27 @@ if __name__ == '__main__':
         X = model.fake_B[0,0].detach().cpu().numpy()
         
         ori_size_wh = tuple(np.concatenate(data['ori_size']))
+        ori_size_wh_tgt = tuple(np.concatenate(data['ori_size_tgt']))
+        print('Original size:', ori_size_wh, 'Target size:', ori_size_wh_tgt)
+        #break
         X_slice = resize(X, ori_size_wh)
         
         writeX_to_tiff(X_slice, domain, sub_id, eye, slice_idx, output_dir)
         if opt.save_seg:
             Ysrc = model.pred_real_mask_A
+            print('Ysrc shape before resize', Ysrc.shape)
             Ysrc = Ysrc[0,0].detach().cpu().numpy().astype(np.uint8)
             Ysrc = resize(Ysrc, ori_size_wh, method=Image.NEAREST)
-            #Ytgt = model.pred_real_mask_B
+            #print('Ysrc shape after resize', Ysrc.shape)
             writeY_to_numpy(Ysrc, domain, sub_id, eye, slice_idx, output_dir, 'src')
-            #writeY_to_numpy(Ytgt, domain, sub_id, eye, slice_idx, output_dir, 'tgt')
             
+            #break
+            #Ytgt = model.pred_real_mask_B
+            #print('Ytgt shape before resize', Ytgt.shape)
+            #Ytgt = Ytgt[0,0].detach().cpu().numpy().astype(np.uint8)
+            #Ytgt = resize(Ytgt, ori_size_wh_tgt, method=Image.NEAREST)
+            #print('Ytgt shape after resize', Ytgt.shape)
+            #writeY_to_numpy(Ytgt, domain, sub_id, eye, slice_idx, output_dir, 'tgt')
+            #print('Saved segmentation to ', tmp_dir / output_dir / "npy" / f'{domain}' / f'{sub_id}' / f"ACCUTY-{eye}-{slice_idx}-src.npy")
     normalize_volumes(output_dir, domain)
     #webpage.save()  # save the HTML
